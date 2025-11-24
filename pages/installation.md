@@ -75,11 +75,12 @@ appropriate binary name.
 1. [Vanilla Emacs with lsp-mode](#vanilla-emacs-with-lsp-mode)
 2. [Vanilla Emacs with eglot](#vanilla-emacs-with-eglot)
 3. [Visual Studio Code](#visual-studio-code)
-4. [neovim](#neovim)
-7. [Vim + Vim-LSP](#vim--vim-lsp)
-8. [Helix](#helix)
-9. [Sublime Text](#sublime-text)
-10. [Zed](#zed)
+4. [Cursor](#cursor)
+5. [neovim](#neovim)
+6. [Vim + Vim-LSP](#vim--vim-lsp)
+7. [Helix](#helix)
+8. [Sublime Text](#sublime-text)
+9. [Zed](#zed)
 
 ### Vanilla Emacs with lsp-mode
 The emacs instructions assume you're using `use-package`, which you
@@ -160,6 +161,22 @@ use the Expert executable instead.
 To change to a local executable, go to `Settings -> Extensions -> Lexical` and
 type `/my/home/projects/expert/apps/expert/burrito_out/expert_linux_amd64` into the text box in
 the `Server: Release path override` section.
+
+### Cursor
+
+1. Download `lexical` extension, by pressing Ctrl+Shift+P (Cmd+Shift+P on Mac) and searching for "Extensions: Install Extension". This is required as currently Expert does not have its own extension.
+2. Build or download a release of Expert, remember the path where it is (assuming `~/.local/bin/expert_linux_amd64` for the rest of the instructions)
+3. Create a wrapper script, say in `/home/user/start_expert.sh`:
+
+```sh
+#!/bin/sh
+~/.local/bin/expert_linux_amd64 --stdio
+```
+
+4. Make the wrapper executable: `chmod +x /home/user/start_expert.sh`
+5. In Cursor, press Ctrl+Shift+P again and select "Open VS Code Settings"
+6. Search for "lexical"
+7. In "Lexical › Server: Release Path Override" put the path to your wrapper (you must use an absolute path here)
 
 ### Neovim
 
