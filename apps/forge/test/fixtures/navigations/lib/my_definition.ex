@@ -7,7 +7,7 @@ defmodule MyDefinition do
     quote do
       import MyDefinition
 
-      def hello_func_in_using() do
+      def hello_func_in_using do
         "Hello, world!"
       end
     end
