@@ -104,7 +104,7 @@ defmodule Expert.Port do
           cmd =
             "cd #{directory}; printf \"#{@path_marker}:%s:#{@path_marker}\" (string join ':' $PATH)"
 
-          ["-l", "-c", cmd]
+          ["--no-config", "-c", cmd]
 
         "nu" ->
           # Nushell stores PATH as a list in $env.PATH, so we join with colons.
