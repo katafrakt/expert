@@ -241,18 +241,18 @@ let
         in
         drv;
 
-      snowflake =
+      uniq =
         let
-          version = "1.0.4";
+          version = "0.6.2";
           drv = buildMix {
             inherit version;
-            name = "snowflake";
+            name = "uniq";
             appConfigPath = ./config;
 
             src = fetchHex {
               inherit version;
-              pkg = "snowflake";
-              sha256 = "badb07ebb089a5cff737738297513db3962760b10fe2b158ae3bebf0b4d5be13";
+              pkg = "uniq";
+              sha256 = "95aa2a41ea331ef0a52d8ed12d3e730ef9af9dbc30f40646e6af334fbd7bc0fc";
             };
           };
         in

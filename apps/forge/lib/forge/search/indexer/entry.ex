@@ -15,8 +15,8 @@ defmodule Forge.Search.Indexer.Entry do
   @type subject :: String.t()
   @type entry_subtype :: :reference | :definition
   @type version :: String.t()
-  @type entry_id :: pos_integer() | nil
-  @type block_id :: pos_integer() | :root
+  @type entry_id :: binary() | nil
+  @type block_id :: binary() | :root
   @type subject_query :: subject() | :_
   @type entry_type_query :: entry_type() | :_
   @type entry_subtype_query :: entry_subtype() | :_
@@ -137,7 +137,7 @@ defmodule Forge.Search.Indexer.Entry do
   @spec updated_at(t(), datetime_format) :: date_type()
   def updated_at(entry, format \\ :erl)
 
-  def updated_at(%__MODULE__{id: id} = entry, format) when is_integer(id) do
+  def updated_at(%__MODULE__{id: id} = entry, format) when is_binary(id) do
     case format do
       :erl -> Identifier.to_erl(entry.id)
       :unix -> Identifier.to_unix(id)

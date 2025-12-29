@@ -32,7 +32,7 @@ defmodule Engine.Search.Indexer do
   defp do_update_index(%Project{} = project, backend) do
     path_to_ids =
       backend.reduce(%{}, fn
-        %Entry{path: path} = entry, path_to_ids when is_integer(entry.id) ->
+        %Entry{path: path} = entry, path_to_ids when is_binary(entry.id) ->
           Map.update(path_to_ids, path, entry.id, &max(&1, entry.id))
 
         _entry, path_to_ids ->
