@@ -84,7 +84,7 @@ defmodule Expert.EngineNode do
 
           case node_start do
             {:ok, _} ->
-              unquote(port_mapper).register()
+              :ok = unquote(port_mapper).register()
               IO.puts("ok")
 
             {:error, reason} ->
@@ -243,7 +243,7 @@ defmodule Expert.EngineNode do
     defp launch_engine_builder(project, elixir, env) do
       lsp = Expert.get_lsp()
 
-      Expert.log_info(lsp, "Found elixir executable at #{elixir}")
+      Expert.log_info(lsp, project, "Found elixir executable at #{elixir}")
 
       expert_priv = :code.priv_dir(:expert)
       packaged_engine_source = Path.join([expert_priv, "engine_source", "apps", "engine"])
@@ -282,7 +282,7 @@ defmodule Expert.EngineNode do
           {launcher, opts}
         end
 
-      Expert.log_info(lsp, "Finding or building engine")
+      Expert.log_info(lsp, project, "Finding or building engine")
 
       project_name = Project.name(project)
 
