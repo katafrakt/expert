@@ -84,7 +84,7 @@ defmodule Expert.EngineNode do
 
           case node_start do
             {:ok, _} ->
-              unquote(port_mapper).register()
+              :ok = unquote(port_mapper).register()
               IO.puts("ok")
 
             {:error, reason} ->
@@ -243,7 +243,7 @@ defmodule Expert.EngineNode do
     defp launch_engine_builder(project, elixir, env) do
       lsp = Expert.get_lsp()
 
-      Expert.log_info(lsp, "Found elixir executable at #{elixir}")
+      Expert.log_info(lsp, project, "Found elixir executable at #{elixir}")
 
       expert_priv = :code.priv_dir(:expert)
       packaged_engine_source = Path.join([expert_priv, "engine_source", "apps", "engine"])
@@ -255,34 +255,15 @@ defmodule Expert.EngineNode do
 
       build_engine_script = Path.join(expert_priv, "build_engine.exs")
 
-      opts =
-        [
-          args: [
-            build_engine_script,
-            "--source-path",
-            engine_source,
-            "--vsn",
-            Expert.vsn()
-          ],
-          env: Expert.Port.ensure_charlists(env),
-          cd: Project.root_path(project)
-        ]
+      args = [
+        build_engine_script,
+        "--source-path",
+        engine_source,
+        "--vsn",
+        Expert.vsn()
+      ]
 
-      {launcher, opts} =
-        if Forge.OS.windows?() do
-          {elixir, opts}
-        else
-          launcher = Expert.Port.path()
-
-          opts =
-            Keyword.update(opts, :args, [elixir], fn old_args ->
-              [elixir | Enum.map(old_args, &to_string/1)]
-            end)
-
-          {launcher, opts}
-        end
-
-      Expert.log_info(lsp, "Finding or building engine")
+      Expert.log_info(lsp, project, "Finding or building engine")
 
       project_name = Project.name(project)
 
@@ -291,8 +272,8 @@ defmodule Expert.EngineNode do
           fn ->
             Process.flag(:trap_exit, true)
 
-            {:spawn_executable, launcher}
-            |> Port.open([:stderr_to_stdout | opts])
+            elixir
+            |> Expert.Port.open_elixir_with_env(env, args: args, cd: Project.root_path(project))
             |> wait_for_engine()
           end
           |> Task.async()

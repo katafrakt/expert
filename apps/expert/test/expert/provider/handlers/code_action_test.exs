@@ -18,6 +18,10 @@ defmodule Expert.Provider.Handlers.CodeActionTest do
 
     start_supervised!({DynamicSupervisor, Expert.Project.DynamicSupervisor.options()})
     start_supervised!({Expert.Project.Supervisor, project})
+    start_supervised!({Expert.ActiveProjects, []})
+
+    Expert.ActiveProjects.set_projects([project])
+    Expert.Configuration.new() |> Expert.Configuration.set()
 
     EngineApi.register_listener(project, self(), [project_compiled()])
     EngineApi.schedule_compile(project, true)
@@ -25,6 +29,11 @@ defmodule Expert.Provider.Handlers.CodeActionTest do
     assert_receive project_compiled(), 5000
 
     {:ok, project: project}
+  end
+
+  setup do
+    :persistent_term.erase(Expert.Configuration)
+    :ok
   end
 
   def build_request(path, {start_line, start_char}, {end_line, end_char}) do
@@ -61,9 +70,8 @@ defmodule Expert.Provider.Handlers.CodeActionTest do
     end
   end
 
-  def handle(request, project) do
-    config = Expert.Configuration.new(project: project)
-    Handlers.CodeAction.handle(request, config)
+  def handle(request, _project) do
+    Handlers.CodeAction.handle(request)
   end
 
   describe "handle code actions" do

@@ -1,5 +1,7 @@
 defmodule Expert.Provider.Handlers.CodeLens do
-  alias Expert.Configuration
+  @behaviour Expert.Provider.Handler
+
+  alias Expert.ActiveProjects
   alias Expert.EngineApi
   alias Expert.Provider.Handlers
   alias Forge.Document
@@ -12,14 +14,16 @@ defmodule Expert.Provider.Handlers.CodeLens do
   import Document.Line
   require Logger
 
-  def handle(
-        %Requests.TextDocumentCodeLens{params: %Structures.CodeLensParams{} = params},
-        %Configuration{} = config
-      ) do
+  @impl Expert.Provider.Handler
+  def handle(%Requests.TextDocumentCodeLens{params: %Structures.CodeLensParams{} = params}) do
+    document = Document.Container.context_document(params, nil)
+    projects = ActiveProjects.projects()
+    project = Project.project_for_document(projects, document)
+
     document = Document.Container.context_document(params, nil)
 
     lenses =
-      case reindex_lens(config.project, document) do
+      case reindex_lens(project, document) do
         nil -> []
         lens -> List.wrap(lens)
       end

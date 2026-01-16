@@ -2,10 +2,15 @@ defmodule Expert.ExpertTest do
   alias Expert.State
   alias Forge.Test.Fixtures
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   use Patch
 
   import Expert.Test.Protocol.TransportSupport
+
+  setup do
+    :persistent_term.erase(Expert.Configuration)
+    :ok
+  end
 
   test "sends an error message on engine initialization error" do
     with_patched_transport()
@@ -15,7 +20,8 @@ defmodule Expert.ExpertTest do
 
     reason = :something_bad
 
-    assert {:noreply, ^lsp} = Expert.handle_info({:engine_initialized, {:error, reason}}, lsp)
+    assert {:noreply, ^lsp} =
+             Expert.handle_info({:engine_initialized, project, {:error, reason}}, lsp)
 
     error_message = "[Project #{project.root_uri}] Failed to initialize: #{inspect(reason)}"
     error_message_type = GenLSP.Enumerations.MessageType.error()

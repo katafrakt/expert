@@ -4,38 +4,31 @@ defmodule Expert.Configuration do
   """
 
   alias Expert.Configuration.Support
-  alias Expert.Dialyzer
+  alias Expert.Configuration.WorkspaceSymbols
   alias Expert.Protocol.Id
-  alias Forge.Project
   alias GenLSP.Notifications.WorkspaceDidChangeConfiguration
   alias GenLSP.Requests
   alias GenLSP.Structures
 
-  defstruct project: nil,
-            support: nil,
+  defstruct support: nil,
             client_name: nil,
             additional_watched_extensions: nil,
-            dialyzer_enabled?: false
+            workspace_symbols: %WorkspaceSymbols{}
 
   @type t :: %__MODULE__{
-          project: Project.t() | nil,
           support: support | nil,
           client_name: String.t() | nil,
           additional_watched_extensions: [String.t()] | nil,
-          dialyzer_enabled?: boolean()
+          workspace_symbols: WorkspaceSymbols.t()
         }
 
   @opaque support :: Support.t()
 
-  @dialyzer {:nowarn_function, set_dialyzer_enabled: 2}
-
-  @spec new(Forge.uri(), map(), String.t() | nil) :: t
-  def new(root_uri, %Structures.ClientCapabilities{} = client_capabilities, client_name) do
+  @spec new(Structures.ClientCapabilities.t(), String.t() | nil) :: t
+  def new(%Structures.ClientCapabilities{} = client_capabilities, client_name) do
     support = Support.new(client_capabilities)
-    project = Project.new(root_uri)
 
-    %__MODULE__{support: support, project: project, client_name: client_name}
-    |> tap(&set/1)
+    %__MODULE__{support: support, client_name: client_name}
   end
 
   @spec new(keyword()) :: t
@@ -43,14 +36,15 @@ defmodule Expert.Configuration do
     struct!(__MODULE__, [support: Support.new()] ++ attrs)
   end
 
-  defp set(%__MODULE__{} = config) do
-    # FIXME(mhanberg): I don't think this will work once we have workspace support
+  @spec set(t) :: t
+  def set(%__MODULE__{} = config) do
     :persistent_term.put(__MODULE__, config)
+    config
   end
 
   @spec get() :: t
   def get do
-    :persistent_term.get(__MODULE__, false) || new()
+    :persistent_term.get(__MODULE__, nil) || struct!(__MODULE__, support: Support.new())
   end
 
   @spec client_support(atom()) :: term()
@@ -65,58 +59,44 @@ defmodule Expert.Configuration do
     end
   end
 
-  @spec default(t | nil) ::
+  @spec default() :: {:ok, t} | {:ok, t, Requests.ClientRegisterCapability.t()}
+  def default do
+    apply_config_change(get(), %{})
+  end
+
+  @spec on_change(WorkspaceDidChangeConfiguration.t() | :defaults) ::
           {:ok, t}
           | {:ok, t, Requests.ClientRegisterCapability.t()}
-  def default(nil) do
-    {:ok, default_config()}
+  def on_change(:defaults) do
+    apply_config_change(get(), %{})
   end
 
-  def default(%__MODULE__{} = config) do
-    apply_config_change(config, default_config())
-  end
-
-  @spec on_change(t, WorkspaceDidChangeConfiguration.t()) ::
-          {:ok, t}
-          | {:ok, t, Requests.ClientRegisterCapability.t()}
-  def on_change(%__MODULE__{} = old_config, :defaults) do
-    apply_config_change(old_config, default_config())
-  end
-
-  def on_change(%__MODULE__{} = old_config, %WorkspaceDidChangeConfiguration{} = change) do
-    apply_config_change(old_config, change.params.settings)
-  end
-
-  defp default_config do
-    %{}
+  def on_change(%WorkspaceDidChangeConfiguration{} = change) do
+    apply_config_change(get(), change.params.settings)
   end
 
   defp apply_config_change(%__MODULE__{} = old_config, %{} = settings) do
-    old_config
-    |> set_dialyzer_enabled(settings)
-    |> maybe_add_watched_extensions(settings)
+    new_config =
+      old_config
+      |> set_workspace_symbols(settings)
+      |> set()
+
+    maybe_watched_extensions_request(new_config, settings)
   end
 
-  defp set_dialyzer_enabled(%__MODULE__{} = old_config, settings) do
-    enabled? =
-      if Dialyzer.check_support() == :ok do
-        Map.get(settings, "dialyzerEnabled", true)
-      else
-        false
-      end
-
-    %__MODULE__{old_config | dialyzer_enabled?: enabled?}
+  defp set_workspace_symbols(%__MODULE__{} = config, settings) do
+    %__MODULE__{config | workspace_symbols: WorkspaceSymbols.new(settings)}
   end
 
-  defp maybe_add_watched_extensions(
-         %__MODULE__{} = old_config,
+  defp maybe_watched_extensions_request(
+         %__MODULE__{} = config,
          %{"additionalWatchedExtensions" => []}
        ) do
-    {:ok, old_config}
+    {:ok, config}
   end
 
-  defp maybe_add_watched_extensions(
-         %__MODULE__{} = old_config,
+  defp maybe_watched_extensions_request(
+         %__MODULE__{} = config,
          %{"additionalWatchedExtensions" => extensions}
        )
        when is_list(extensions) do
@@ -137,10 +117,10 @@ defmodule Expert.Configuration do
       params: %Structures.RegistrationParams{registrations: [registration]}
     }
 
-    {:ok, old_config, request}
+    {:ok, config, request}
   end
 
-  defp maybe_add_watched_extensions(%__MODULE__{} = old_config, _) do
-    {:ok, old_config}
+  defp maybe_watched_extensions_request(%__MODULE__{} = config, _settings) do
+    {:ok, config}
   end
 end

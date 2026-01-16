@@ -1,19 +1,24 @@
 defmodule Expert.Provider.Handlers.Formatting do
-  alias Expert.Configuration
+  @behaviour Expert.Provider.Handler
+
+  alias Expert.ActiveProjects
   alias Expert.EngineApi
   alias Forge.Document.Changes
+  alias Forge.Project
   alias GenLSP.Requests
   alias GenLSP.Structures
 
   require Logger
 
-  def handle(
-        %Requests.TextDocumentFormatting{params: %Structures.DocumentFormattingParams{} = params},
-        %Configuration{} = config
-      ) do
+  @impl Expert.Provider.Handler
+  def handle(%Requests.TextDocumentFormatting{
+        params: %Structures.DocumentFormattingParams{} = params
+      }) do
     document = Forge.Document.Container.context_document(params, nil)
+    projects = ActiveProjects.projects()
+    project = Project.project_for_document(projects, document)
 
-    case EngineApi.format(config.project, document) do
+    case EngineApi.format(project, document) do
       {:ok, %Changes{} = document_edits} ->
         {:ok, document_edits}
 

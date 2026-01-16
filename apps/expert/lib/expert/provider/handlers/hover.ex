@@ -1,5 +1,7 @@
 defmodule Expert.Provider.Handlers.Hover do
-  alias Expert.Configuration
+  @behaviour Expert.Provider.Handler
+
+  alias Expert.ActiveProjects
   alias Expert.EngineApi
   alias Expert.Provider.Markdown
   alias Forge.Ast
@@ -13,19 +15,17 @@ defmodule Expert.Provider.Handlers.Hover do
 
   require Logger
 
-  def handle(
-        %Requests.TextDocumentHover{
-          params: %Structures.HoverParams{} = params
-        },
-        %Configuration{} = config
-      ) do
+  @impl Expert.Provider.Handler
+  def handle(%Requests.TextDocumentHover{params: %Structures.HoverParams{} = params}) do
     document = Document.Container.context_document(params, nil)
+    projects = ActiveProjects.projects()
+    project = Project.project_for_document(projects, document)
 
     maybe_hover =
       with {:ok, _document, %Ast.Analysis{} = analysis} <-
              Document.Store.fetch(document.uri, :analysis),
-           {:ok, entity, range} <- resolve_entity(config.project, analysis, params.position),
-           {:ok, markdown} <- hover_content(entity, config.project) do
+           {:ok, entity, range} <- resolve_entity(project, analysis, params.position),
+           {:ok, markdown} <- hover_content(entity, project) do
         content = Markdown.to_content(markdown)
         %Structures.Hover{contents: content, range: range}
       else

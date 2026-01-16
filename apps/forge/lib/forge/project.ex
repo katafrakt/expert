@@ -164,7 +164,15 @@ defmodule Forge.Project do
   end
 
   def manager_node_name(%__MODULE__{} = project) do
-    :"expert-manager-#{name(project)}-#{entropy(project)}@127.0.0.1"
+    workspace = Forge.Workspace.get_workspace()
+
+    workspace_name =
+      case workspace do
+        nil -> name(project)
+        _ -> Forge.Workspace.name(workspace)
+      end
+
+    :"expert-manager-#{workspace_name}-#{entropy(project)}@127.0.0.1"
   end
 
   @doc """
@@ -344,5 +352,85 @@ defmodule Forge.Project do
     project
     |> root_path()
     |> Path.basename()
+  end
+
+  def elixir_project?(%__MODULE__{} = project) do
+    ex_files = project |> root_path() |> Path.join("*.ex") |> Path.wildcard()
+    exs_files = project |> root_path() |> Path.join("*.exs") |> Path.wildcard()
+
+    ex_files != [] or exs_files != []
+  end
+
+  @doc """
+  Finds the closest project that contains the given URI.
+  """
+  def project_for_uri(projects, uri) do
+    path = Document.Path.from_uri(uri)
+    closest_project_for_path(projects, path)
+  end
+
+  @doc """
+  Finds the closest project that contains the given document.
+  """
+  def project_for_document(projects, %Document{} = document) do
+    closest_project_for_path(projects, document.path)
+  end
+
+  # Finds the most specific project containing the path (longest root path wins).
+  defp closest_project_for_path(projects, path) do
+    projects
+    |> Enum.filter(fn project ->
+      Forge.Path.parent_path?(path, root_path(project))
+    end)
+    |> Enum.max_by(fn project -> byte_size(root_path(project)) end, fn -> nil end)
+  end
+
+  @doc """
+  Checks if the given path is within the project directory.
+
+  If the path is within a subdirectory of the project and a
+  mix file exists, it returns false.
+  """
+  def within_project?(%__MODULE__{} = project, path) do
+    root_path = if project.mix_project?, do: find_parent_root_dir(path), else: root_path(project)
+    project_path = root_path(project)
+
+    Forge.Path.parent_path?(root_path, project_path)
+  end
+
+  @doc """
+  Finds or creates the project for the given path.
+  """
+  def find_project(path) do
+    project_root = find_parent_root_dir(path)
+
+    if is_nil(project_root) do
+      nil
+    else
+      new(project_root)
+    end
+  end
+
+  def find_parent_root_dir(path) do
+    path = Forge.Document.Path.from_uri(path)
+    path = path |> Path.expand() |> Path.dirname()
+
+    segments = Path.split(path)
+
+    traverse_path(segments)
+  end
+
+  defp traverse_path([]), do: nil
+
+  defp traverse_path(segments) do
+    path = Path.join(segments)
+    mix_exs_path = Path.join(path, "mix.exs")
+
+    if File.exists?(mix_exs_path) do
+      Document.Path.to_uri(path)
+    else
+      {_, rest} = List.pop_at(segments, -1)
+      traverse_path(rest)
+    end
   end
 end

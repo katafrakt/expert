@@ -1,20 +1,21 @@
 defmodule Expert.Provider.Handlers.GoToDefinition do
-  alias Expert.Configuration
+  @behaviour Expert.Provider.Handler
+
+  alias Expert.ActiveProjects
   alias Expert.EngineApi
+  alias Forge.Project
   alias GenLSP.Requests
   alias GenLSP.Structures
 
   require Logger
 
-  def handle(
-        %Requests.TextDocumentDefinition{
-          params: %Structures.DefinitionParams{} = params
-        },
-        %Configuration{} = config
-      ) do
+  @impl Expert.Provider.Handler
+  def handle(%Requests.TextDocumentDefinition{params: %Structures.DefinitionParams{} = params}) do
     document = Forge.Document.Container.context_document(params, nil)
+    projects = ActiveProjects.projects()
+    project = Project.project_for_document(projects, document)
 
-    case EngineApi.definition(config.project, document, params.position) do
+    case EngineApi.definition(project, document, params.position) do
       {:ok, native_location} ->
         {:ok, native_location}
 

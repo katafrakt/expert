@@ -1,24 +1,27 @@
 defmodule Expert.Provider.Handlers.FindReferences do
-  alias Expert.Configuration
+  @behaviour Expert.Provider.Handler
+
+  alias Expert.ActiveProjects
   alias Expert.EngineApi
   alias Forge.Ast
   alias Forge.Document
+  alias Forge.Project
   alias GenLSP.Requests.TextDocumentReferences
   alias GenLSP.Structures
 
   require Logger
 
-  def handle(
-        %TextDocumentReferences{params: %Structures.ReferenceParams{} = params},
-        %Configuration{} = config
-      ) do
+  @impl Expert.Provider.Handler
+  def handle(%TextDocumentReferences{params: %Structures.ReferenceParams{} = params}) do
     document = Forge.Document.Container.context_document(params, nil)
+    projects = ActiveProjects.projects()
+    project = Project.project_for_document(projects, document)
     include_declaration? = !!params.context.include_declaration
 
     locations =
       case Document.Store.fetch(document.uri, :analysis) do
         {:ok, _document, %Ast.Analysis{} = analysis} ->
-          EngineApi.references(config.project, analysis, params.position, include_declaration?)
+          EngineApi.references(project, analysis, params.position, include_declaration?)
 
         _ ->
           nil
