@@ -167,10 +167,10 @@ defmodule Forge.Test.DetectionCase do
   end
 
   defp build_refutation_variation(context, type, variation, test) do
-    {_range, refutation_text} =
+    {_ranges, refutation_text} =
       variation
       |> Variations.wrap_with(test)
-      |> pop_range()
+      |> pop_all_ranges()
 
     test_name = type_to_name(type, variation)
 

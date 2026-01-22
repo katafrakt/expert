@@ -516,7 +516,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       ]
 
       assert {:ok, ^uri, definition} = definition(project, subject_module, [uri, subject_uri])
-      assert definition == "  def «button»(_assigns) do"
+      assert definition == "  def «button(_assigns)» do"
     end
 
     test "find the definition when shorthand notation for function from same module", %{
@@ -541,7 +541,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert {:ok, ^subject_uri, fragment} =
                definition(project, subject_module, [uri, subject_uri])
 
-      assert fragment == "  def «button»(_assigns), do: nil"
+      assert fragment == "  def «button(_assigns)», do: nil"
     end
 
     test "find the definition when shorthand notation used and imported function", %{
@@ -563,7 +563,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       ]
 
       assert {:ok, ^uri, fragment} = definition(project, subject_module, [uri, subject_uri])
-      assert fragment == "  def «button»(_assigns) do"
+      assert fragment == "  def «button(_assigns)» do"
     end
 
     test "find the definition when shorthand notation used on closing tag", %{
@@ -585,7 +585,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       ]
 
       assert {:ok, ^uri, fragment} = definition(project, subject_module, [uri, subject_uri])
-      assert fragment == "  def «button»(_assigns) do"
+      assert fragment == "  def «button(_assigns)» do"
     end
 
     test "find the definition when shorthand notation used on self-closing tag", %{
@@ -607,7 +607,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       ]
 
       assert {:ok, ^uri, fragment} = definition(project, subject_module, [uri, subject_uri])
-      assert fragment == "  def «button»(_assigns) do"
+      assert fragment == "  def «button(_assigns)» do"
     end
   end
 

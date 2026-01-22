@@ -182,7 +182,7 @@ let
 
       gen_lsp =
         let
-          version = "0.11.2";
+          version = "0.11.3";
           drv = buildMix {
             inherit version;
             name = "gen_lsp";
@@ -191,7 +191,7 @@ let
             src = fetchHex {
               inherit version;
               pkg = "gen_lsp";
-              sha256 = "7a5ccf2403d368a82ffa968ec3993f30d41f4bc2837c69c068ed08c598340a4d";
+              sha256 = "a674de4b06cbc56311d13a0fdf69066837785ba9c90da54984e58f485fd019cb";
             };
 
             beamDeps = [
@@ -347,6 +347,23 @@ let
               inherit version;
               pkg = "sourceror";
               sha256 = "29dbdfc92e04569c9d8e6efdc422fc1d815f4bd0055dc7c51b8800fb75c4b3f1";
+            };
+          };
+        in
+        drv;
+
+      spitfire =
+        let
+          version = "0.3.0";
+          drv = buildMix {
+            inherit version;
+            name = "spitfire";
+            appConfigPath = ./config;
+
+            src = fetchHex {
+              inherit version;
+              pkg = "spitfire";
+              sha256 = "a04c9ff005be532ae692a5fe16cb98eb856555b64a6e9f3cf574072a87d07975";
             };
           };
         in

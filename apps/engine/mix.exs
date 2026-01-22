@@ -49,7 +49,7 @@ defmodule Engine.MixProject do
       Mix.Dialyzer.dependency(),
       {:elixir_sense, github: "katafrakt/elixir_sense", branch: "track-macro-using"},
       {:forge, path: "../forge"},
-      {:gen_lsp, "~> 0.11"},
+      {:gen_lsp, "~> 0.11.3"},
       {:patch, "~> 0.15", only: [:dev, :test], runtime: false},
       {:path_glob, "~> 0.2"},
       {:phoenix_live_view, "~> 1.0", only: [:test], runtime: false},

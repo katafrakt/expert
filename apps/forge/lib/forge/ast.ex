@@ -77,14 +77,18 @@ defmodule Forge.Ast do
   require Logger
   require Sourceror
 
+  @parser (case Application.compile_env(:forge, :parser, :spitfire) do
+             :spitfire -> Forge.Ast.Parser.Spitfire
+             :elixir -> Forge.Ast.Parser.Elixir
+           end)
+
   @typedoc "Return value from `Code.Fragment.cursor_context/2`"
   @type cursor_context :: any()
 
   @typedoc "Return value from `Code.Fragment.surround_context/3`"
   @type surround_context :: any()
 
-  @type parse_error ::
-          {location :: keyword(), String.t() | {String.t(), String.t()}, String.t()}
+  @type parse_error :: {location :: keyword(), String.t()}
 
   @type patch :: %{
           optional(:preserve_indentation) => boolean(),
@@ -154,9 +158,15 @@ defmodule Forge.Ast do
 
   @doc """
   Returns an AST generated from a valid document or string.
+
+  When parsing fails but a partial AST is recovered, returns
+  `{:error, ast, parse_error, comments}` where the AST may be useful
+  for features like document outline on syntactically invalid code.
   """
   @spec from(Document.t() | Analysis.t() | String.t()) ::
-          {:ok, Macro.t(), comment_metadata()} | {:error, parse_error()}
+          {:ok, Macro.t(), comment_metadata()}
+          | {:error, Macro.t(), parse_error(), comment_metadata()}
+          | {:error, parse_error()}
   def from(%Document{} = document) do
     document
     |> Document.to_string()
@@ -256,8 +266,16 @@ defmodule Forge.Ast do
           {:ok, [Macro.t(), ...]} | {:error, :not_found | parse_error()}
   def path_at(%struct{} = document_or_analysis, %Position{} = position)
       when struct in [Document, Analysis] do
-    with {:ok, ast, _} <- from(document_or_analysis) do
-      path_at(ast, position)
+    case from(document_or_analysis) do
+      {:ok, ast, _comments} ->
+        path_at(ast, position)
+
+      # Try to use partial AST from syntax errors for features like document outline
+      {:error, ast, _error, _comments} ->
+        path_at(ast, position)
+
+      error ->
+        error
     end
   end
 
@@ -486,21 +504,11 @@ defmodule Forge.Ast do
   # private
 
   defp do_string_to_quoted(string) when is_binary(string) do
-    Code.string_to_quoted_with_comments(string,
-      literal_encoder: &{:ok, {:__block__, &2, [&1]}},
-      token_metadata: true,
-      columns: true,
-      unescape: false
-    )
+    @parser.string_to_quoted(string)
   end
 
   defp do_container_cursor_to_quoted(fragment) when is_binary(fragment) do
-    Code.Fragment.container_cursor_to_quoted(fragment,
-      literal_encoder: &{:ok, {:__block__, &2, [&1]}},
-      token_metadata: true,
-      columns: true,
-      unescape: false
-    )
+    @parser.container_cursor_to_quoted(fragment)
   end
 
   defp do_cursor_context(fragment) when is_binary(fragment) do
