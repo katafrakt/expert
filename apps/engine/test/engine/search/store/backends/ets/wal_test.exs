@@ -11,6 +11,8 @@ defmodule Engine.Search.Store.Backends.Ets.WalTest do
 
   @table_name :wal_test
   @schema_version 1
+  # Must match @no_checkpoint_id in Wal module
+  @no_checkpoint_id <<0::128>>
 
   setup do
     project = project()
@@ -187,7 +189,7 @@ defmodule Engine.Search.Store.Backends.Ets.WalTest do
       {:ok, new_wal} = Wal.load(project, @schema_version, @table_name)
 
       assert Wal.size(new_wal) == {:ok, 0}
-      assert new_wal.checkpoint_version == 0
+      assert new_wal.checkpoint_version == @no_checkpoint_id
     end
 
     test "can load a checkpoint", %{wal: wal_state, project: project} do
@@ -195,7 +197,7 @@ defmodule Engine.Search.Store.Backends.Ets.WalTest do
         :ets.insert(@table_name, [{:first, 1}, {:second, 2}])
       end
 
-      assert wal_state.checkpoint_version == 0
+      assert wal_state.checkpoint_version == @no_checkpoint_id
 
       # prior, we had no checkpoint and one item in the update
       # log. Checkpointing clears out the updates log and
@@ -205,7 +207,7 @@ defmodule Engine.Search.Store.Backends.Ets.WalTest do
 
       checkpoint_version = new_wal.checkpoint_version
 
-      assert checkpoint_version > 0
+      assert checkpoint_version > @no_checkpoint_id
       assert {:ok, 0} = Wal.size(new_wal)
 
       items = dump_and_close_table()

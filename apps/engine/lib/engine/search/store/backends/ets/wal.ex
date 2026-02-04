@@ -34,9 +34,10 @@ defmodule Engine.Search.Store.Backends.Ets.Wal do
     :update_element
   ]
 
-  @no_checkpoint_id 0
+  # A binary that sorts before any valid UUIDv7 (all zeros)
+  @no_checkpoint_id <<0::128>>
   @chunk_size 10_000
-  @checkpoint_int_length 20
+  @checkpoint_hex_length 32
   @default_max_operations 50_000
 
   defmacro with_wal(wal_state, do: block) do
@@ -354,14 +355,14 @@ defmodule Engine.Search.Store.Backends.Ets.Wal do
     end)
   end
 
-  defp checkpoint_file_name(checkpoint_id) when is_integer(checkpoint_id) do
-    checkpoint_id
-    |> Integer.to_string(10)
-    |> checkpoint_file_name()
+  defp checkpoint_file_name(checkpoint_id) when is_binary(checkpoint_id) and byte_size(checkpoint_id) == 16 do
+    # Convert 16-byte binary UUID to hex string for filesystem-safe name
+    Base.encode16(checkpoint_id, case: :lower) <> ".checkpoint"
   end
 
   defp checkpoint_file_name(checkpoint_id) when is_binary(checkpoint_id) do
-    String.pad_leading(checkpoint_id, @checkpoint_int_length, "0") <> ".checkpoint"
+    # Already a hex string (for backwards compatibility during migration)
+    String.pad_leading(checkpoint_id, @checkpoint_hex_length, "0") <> ".checkpoint"
   end
 
   defp checkpoint_log_name(%Project{} = project) do
@@ -414,9 +415,20 @@ defmodule Engine.Search.Store.Backends.Ets.Wal do
   defp extract_checkpoint_version(checkpoint_path) do
     file_name = Path.basename(checkpoint_path)
 
-    with [id_string, _] <- String.split(file_name, "."),
-         {id, ""} <- Integer.parse(id_string, 10) do
-      {:ok, id}
+    with [id_string, _] <- String.split(file_name, ".") do
+      case Base.decode16(id_string, case: :mixed) do
+        {:ok, binary_id} when byte_size(binary_id) == 16 ->
+          # New UUIDv7 format (32 hex chars -> 16 bytes)
+          {:ok, binary_id}
+
+        _ ->
+          # Legacy integer format - parse and convert to a binary for comparison
+          # We pad the integer to 16 bytes so comparisons work correctly
+          case Integer.parse(id_string, 10) do
+            {id, ""} -> {:ok, <<id::128>>}
+            _ -> :error
+          end
+      end
     else
       _ ->
         :error

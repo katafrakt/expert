@@ -17,7 +17,7 @@ defmodule Engine.Search.IndexerTest do
       {__MODULE__, :entries}
       |> :persistent_term.get([])
       |> Enum.reduce(accumulator, fn
-        %{id: id} = entry, acc when is_integer(id) -> reducer_fun.(entry, acc)
+        %{id: id} = entry, acc when is_binary(id) -> reducer_fun.(entry, acc)
         _, acc -> acc
       end)
     end

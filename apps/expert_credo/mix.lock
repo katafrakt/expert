@@ -23,4 +23,5 @@
   "spitfire": {:hex, :spitfire, "0.3.1", "409b5ed3a2677df8790ed8b0542ca7e36c607d744fef4cb8cb8872fc80dd1803", [:mix], [], "hexpm", "72ff34d8f0096313a4b1a6505513c5ef4bbc0919bd8c181c07fc8d8dea8c9056"},
   "telemetry": {:hex, :telemetry, "1.3.0", "fedebbae410d715cf8e7062c96a1ef32ec22e764197f70cda73d82778d61e7a2", [:rebar3], [], "hexpm", "7015fc8919dbe63764f4b4b87a95b7c0996bd539e0d499be6ec9d7f3875b79e6"},
   "typed_struct": {:hex, :typed_struct, "0.3.0", "939789e3c1dca39d7170c87f729127469d1315dcf99fee8e152bb774b17e7ff7", [:mix], [], "hexpm", "c50bd5c3a61fe4e198a8504f939be3d3c85903b382bde4865579bc23111d1b6d"},
+  "uniq": {:hex, :uniq, "0.6.2", "51846518c037134c08bc5b773468007b155e543d53c8b39bafe95b0af487e406", [:mix], [{:ecto, "~> 3.0", [hex: :ecto, repo: "hexpm", optional: true]}], "hexpm", "95aa2a41ea331ef0a52d8ed12d3e730ef9af9dbc30f40646e6af334fbd7bc0fc"},
 }

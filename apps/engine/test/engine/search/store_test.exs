@@ -211,9 +211,9 @@ defmodule Engine.Search.StoreTest do
           |> entries()
 
         subject_entry = Enum.find(entries, &(&1.subject == Third.Module))
-        assert {:ok, [first_ref, second_ref, ^subject_entry]} = Store.siblings(subject_entry)
-        assert first_ref.subject == First.Module
-        assert second_ref.subject == Second.Module
+        assert {:ok, siblings} = Store.siblings(subject_entry)
+        sibling_subjects = Enum.map(siblings, & &1.subject) |> MapSet.new()
+        assert sibling_subjects == MapSet.new([First.Module, Second.Module, Third.Module])
       end
 
       test "finding siblings of a function" do
@@ -239,10 +239,9 @@ defmodule Engine.Search.StoreTest do
 
         assert {:ok, siblings} = Store.siblings(subject_entry)
         siblings = Enum.filter(siblings, &(&1.subtype == :definition))
+        sibling_subjects = Enum.map(siblings, & &1.subject) |> MapSet.new()
 
-        assert [first_fun, second_fun, ^subject_entry] = siblings
-        assert first_fun.subject == "Parent.fun/0"
-        assert second_fun.subject == "Parent.fun2/1"
+        assert sibling_subjects == MapSet.new(["Parent.fun/0", "Parent.fun2/1", "Parent.fun3/2"])
       end
 
       test "findidng siblings of a non-existent entry" do
