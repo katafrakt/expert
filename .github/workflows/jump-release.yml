@@ -1,0 +1,56 @@
+name: Jump Release
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Jump release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: jump-release
+      - uses: extractions/setup-just@v3
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.3.4.1"
+          elixir-version: "1.17.3"
+          version-type: strict
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Set release version
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          echo "0.1.0-r${DATE}" > version.txt
+          echo "TAG=r${DATE}" >> $GITHUB_ENV
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.txt
+          git commit -m "[jump] bump version"
+          git tag "$TAG"
+          git push origin HEAD --tags
+
+      - run: just deps expert
+      - run: just deps engine
+      - run: just burrito
+        env:
+          MIX_ENV: prod
+
+      - name: Create Checksum
+        run: |
+          cd ./apps/expert/burrito_out
+          chmod +x ./*
+          shasum -a 256 ./* > expert_checksums.txt
+
+      - name: Create draft release
+        run: gh release create "$TAG" --draft ./apps/expert/burrito_out/*
