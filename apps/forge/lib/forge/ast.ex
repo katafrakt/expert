@@ -171,6 +171,16 @@ defmodule Forge.Ast do
     document
     |> Document.to_string()
     |> from()
+    |> case do
+      {:error, :crashed, exception, stacktrace} ->
+        log_parser_crash(exception, stacktrace, document.path)
+
+        {:error,
+         {[line: 1, column: 1], "parser crashed: #{Exception.format_banner(:error, exception)}"}}
+
+      other ->
+        other
+    end
   end
 
   def from(%Analysis{valid?: true} = analysis) do
@@ -205,12 +215,29 @@ defmodule Forge.Ast do
       {:ok, quoted} ->
         {:ok, quoted}
 
+      {:error, :crashed, exception, stacktrace} ->
+        log_parser_crash(exception, stacktrace, document.path)
+
+        {:error,
+         {[line: 1, column: 1], "parser crashed: #{Exception.format_banner(:error, exception)}"}}
+
       _error ->
         # https://github.com/elixir-lang/elixir/issues/12673#issuecomment-1626932280
         # NOTE: Adding new line doesn't always work,
         # so we need to try again without adding new line
         document_fragment = Document.fragment(document, position)
-        do_container_cursor_to_quoted(document_fragment)
+
+        case do_container_cursor_to_quoted(document_fragment) do
+          {:error, :crashed, exception, stacktrace} ->
+            log_parser_crash(exception, stacktrace, document.path)
+
+            {:error,
+             {[line: 1, column: 1],
+              "parser crashed: #{Exception.format_banner(:error, exception)}"}}
+
+          other ->
+            other
+        end
     end
   end
 
@@ -509,6 +536,15 @@ defmodule Forge.Ast do
 
   defp do_container_cursor_to_quoted(fragment) when is_binary(fragment) do
     @parser.container_cursor_to_quoted(fragment)
+  end
+
+  defp log_parser_crash(exception, stacktrace, path) do
+    path_info =
+      if path, do: " when parsing #{path}. This file will not be used in search index.", else: ""
+
+    Logger.warning(
+      "Spitfire crashed#{path_info}\n#{Exception.format(:error, exception, stacktrace)}"
+    )
   end
 
   defp do_cursor_context(fragment) when is_binary(fragment) do

@@ -11,6 +11,7 @@ defmodule Expert.Application do
   require Logger
 
   @impl true
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def start(_type, _args) do
     argv = Burrito.Util.Args.argv()
 
@@ -31,6 +32,9 @@ defmodule Expert.Application do
 
           System.halt(1)
         end
+
+      _ ->
+        :noop
     end
 
     {opts, _argv, _invalid} =
