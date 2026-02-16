@@ -114,7 +114,7 @@ defmodule Expert.Port do
 
     case :os.find_executable(to_charlist(name), to_charlist(path)) do
       false ->
-        {:error, name, "Couldn't find an #{name} executable. Using PATH=#{path}"}
+        {:error, name, "Couldn't find an #{name} executable"}
 
       elixir ->
         env =
@@ -148,8 +148,7 @@ defmodule Expert.Port do
 
     case :os.find_executable(to_charlist(name), to_charlist(path)) do
       false ->
-        {:error, name,
-         "Couldn't find an #{name} executable for project at #{root_path}. Using PATH=#{path}"}
+        {:error, name, "Couldn't find an #{name} executable for project at #{root_path}"}
 
       elixir ->
         env =
@@ -202,7 +201,7 @@ defmodule Expert.Port do
         {executable, opts}
       end
 
-    Port.open({:spawn_executable, launcher}, [:stderr_to_stdout, :exit_status | opts])
+    Port.open({:spawn_executable, launcher}, [:binary, :stderr_to_stdout, :exit_status | opts])
   end
 
   defp open_port(:unix, executable, opts) do
@@ -213,7 +212,7 @@ defmodule Expert.Port do
         [executable | Enum.map(old_args, &to_string/1)]
       end)
 
-    Port.open({:spawn_executable, launcher}, [:stderr_to_stdout, :exit_status | opts])
+    Port.open({:spawn_executable, launcher}, [:binary, :stderr_to_stdout, :exit_status | opts])
   end
 
   defp port_wrapper_path do

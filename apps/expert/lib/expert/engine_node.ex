@@ -233,6 +233,7 @@ defmodule Expert.EngineNode do
       with {:ok, elixir, env} <- Expert.Port.project_executable(project, "elixir"),
            {:ok, erl, _env} <- Expert.Port.project_executable(project, "erl") do
         lsp = Expert.get_lsp()
+        Expert.log_info(lsp, project, "Using path: #{System.get_env("PATH")}")
         Expert.log_info(lsp, project, "Found elixir executable at #{elixir}")
         Expert.log_info(lsp, project, "Found erl executable at #{erl}")
 
@@ -287,8 +288,8 @@ defmodule Expert.EngineNode do
 
     defp wait_for_engine(port, last_line \\ "") do
       receive do
-        {^port, {:data, ~c"engine_path:" ++ engine_path}} ->
-          engine_path = engine_path |> to_string() |> String.trim()
+        {^port, {:data, "engine_path:" <> engine_path}} ->
+          engine_path = String.trim(engine_path)
           Logger.info("Engine build available at: #{engine_path}")
 
           Logger.info("ebin paths:\n#{inspect(ebin_paths(engine_path), pretty: true)}")
