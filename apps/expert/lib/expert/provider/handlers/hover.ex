@@ -168,23 +168,28 @@ defmodule Expert.Provider.Handlers.Hover do
   end
 
   defp parse_mfa(mfa_string) do
-    # Parse "Module.Name.function/arity" format
-    case Regex.run(~r/^(.+)\.([^.\/]+)\/(\d+)$/, mfa_string) do
-      [_, module_str, fun_str, arity_str] ->
-        module =
-          if String.starts_with?(module_str, ":") do
-            module_str |> String.trim_leading(":") |> String.to_existing_atom()
-          else
-            String.to_existing_atom("Elixir." <> module_str)
-          end
+    # regex for "Module.Name.function/arity"
+    mfa_regex = ~r/^(.+)\.([^.\/]+)\/(\d+)$/
 
-        fun = String.to_atom(fun_str)
-        arity = String.to_integer(arity_str)
-        {module, fun, arity}
-
+    with [_, module_str, fun_str, arity_str] <- Regex.run(mfa_regex, mfa_string),
+         {:ok, module} <- module_from_mfa(module_str) do
+      fun = String.to_atom(fun_str)
+      arity = String.to_integer(arity_str)
+      {module, fun, arity}
+    else
       _ ->
         nil
     end
+  end
+
+  defp module_from_mfa(module_str) do
+    if String.starts_with?(module_str, ":") do
+      module_str |> String.trim_leading(":") |> String.to_existing_atom()
+    else
+      String.to_existing_atom("Elixir." <> module_str)
+    end
+  rescue
+    ArgumentError -> {:error, :no_module}
   end
 
   defp module_header(:module, %Docs{module: module}) do
