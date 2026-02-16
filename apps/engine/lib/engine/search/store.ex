@@ -73,6 +73,12 @@ defmodule Engine.Search.Store do
     call_or_default({:siblings, entry}, [])
   end
 
+  @spec resolve_call_target(module(), atom(), non_neg_integer()) ::
+          {:ok, {module(), atom(), non_neg_integer(), boolean()}}
+  def resolve_call_target(module, fun, arity) do
+    call_or_default({:resolve_call_target, module, fun, arity}, {module, fun, arity, false})
+  end
+
   @spec fuzzy(Entry.subject(), Entry.constraints()) :: {:ok, [Entry.t()]} | {:error, term()}
   def fuzzy(subject, constraints) do
     call_or_default({:fuzzy, subject, constraints}, [])
@@ -212,6 +218,13 @@ defmodule Engine.Search.Store do
   def handle_call({:fuzzy, subject, constraints}, _from, {ref, %State{} = state}) do
     state
     |> State.fuzzy(subject, constraints)
+    |> maybe_broadcast_loading(state)
+    |> then(&{:reply, &1, {ref, state}})
+  end
+
+  def handle_call({:resolve_call_target, module, fun, arity}, _from, {ref, %State{} = state}) do
+    state
+    |> State.resolve_call_target(module, fun, arity)
     |> maybe_broadcast_loading(state)
     |> then(&{:reply, &1, {ref, state}})
   end

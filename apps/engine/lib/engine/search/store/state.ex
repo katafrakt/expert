@@ -173,6 +173,31 @@ defmodule Engine.Search.Store.State do
     end
   end
 
+  def resolve_call_target(%__MODULE__{loaded?: false}, _module, _fun, _arity) do
+    {:error, :loading}
+  end
+
+  def resolve_call_target(%__MODULE__{} = state, module, fun, arity) do
+    mfa = Forge.Formats.mfa(module, fun, arity)
+
+    case state.backend.find_by_subject(mfa, :_, :definition) do
+      [%Entry{type: {:function, :delegate}, metadata: %{original_mfa: original_mfa}} | _] ->
+        case parse_mfa(original_mfa) do
+          {target_module, target_fun, target_arity} ->
+            {:ok, {target_module, target_fun, target_arity, true}}
+
+          nil ->
+            {:ok, {module, fun, arity, true}}
+        end
+
+      [%Entry{type: {:function, _}} | _] ->
+        {:ok, {module, fun, arity, true}}
+
+      _ ->
+        {:ok, {module, fun, arity, false}}
+    end
+  end
+
   def parent(%__MODULE__{loaded?: false}, _entry) do
     {:error, :loading}
   end
@@ -306,5 +331,29 @@ defmodule Engine.Search.Store.State do
     fuzzy = Fuzzy.from_backend(state.backend)
 
     %__MODULE__{state | fuzzy: fuzzy}
+  end
+
+  defp parse_mfa(mfa_string) do
+    mfa_regex = ~r/^(.+)\.([^.\/]+)\/(\d+)$/
+
+    with [_, module_str, fun_str, arity_str] <- Regex.run(mfa_regex, mfa_string),
+         {:ok, module} <- module_from_mfa(module_str) do
+      fun = String.to_atom(fun_str)
+      arity = String.to_integer(arity_str)
+      {module, fun, arity}
+    else
+      _ ->
+        nil
+    end
+  end
+
+  defp module_from_mfa(module_str) do
+    if String.starts_with?(module_str, ":") do
+      {:ok, module_str |> String.trim_leading(":") |> String.to_existing_atom()}
+    else
+      {:ok, String.to_existing_atom("Elixir." <> module_str)}
+    end
+  rescue
+    ArgumentError -> {:error, :no_module}
   end
 end

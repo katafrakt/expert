@@ -143,53 +143,10 @@ defmodule Expert.Provider.Handlers.Hover do
   end
 
   defp resolve_call_target(project, module, fun, arity) do
-    mfa = Forge.Formats.mfa(module, fun, arity)
-
-    case EngineApi.call(project, Store, :exact, [mfa, [subtype: :definition]]) do
-      {:ok, [%Entry{type: {:function, :delegate}, metadata: %{original_mfa: original_mfa}} | _]} ->
-        # Found a delegate - try to resolve to the original function
-        case parse_mfa(original_mfa) do
-          {target_module, target_fun, target_arity} ->
-            {target_module, target_fun, target_arity, true}
-
-          nil ->
-            # Couldn't parse MFA, fall back to the delegate module itself
-            {module, fun, arity, true}
-        end
-
-      {:ok, [%Entry{type: {:function, _}} | _]} ->
-        # Regular function found in index
-        {module, fun, arity, true}
-
-      _ ->
-        # Not found in index
-        {module, fun, arity, false}
+    case EngineApi.call(project, Store, :resolve_call_target, [module, fun, arity]) do
+      {:ok, result} -> result
+      _ -> {module, fun, arity, false}
     end
-  end
-
-  defp parse_mfa(mfa_string) do
-    # regex for "Module.Name.function/arity"
-    mfa_regex = ~r/^(.+)\.([^.\/]+)\/(\d+)$/
-
-    with [_, module_str, fun_str, arity_str] <- Regex.run(mfa_regex, mfa_string),
-         {:ok, module} <- module_from_mfa(module_str) do
-      fun = String.to_atom(fun_str)
-      arity = String.to_integer(arity_str)
-      {module, fun, arity}
-    else
-      _ ->
-        nil
-    end
-  end
-
-  defp module_from_mfa(module_str) do
-    if String.starts_with?(module_str, ":") do
-      module_str |> String.trim_leading(":") |> String.to_existing_atom()
-    else
-      String.to_existing_atom("Elixir." <> module_str)
-    end
-  rescue
-    ArgumentError -> {:error, :no_module}
   end
 
   defp module_header(:module, %Docs{module: module}) do
