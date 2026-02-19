@@ -49,7 +49,9 @@ defmodule Engine.CodeIntelligence.Docs do
           module: module,
           doc: Entry.parse_doc(module_doc),
           functions_and_macros:
-            parse_entries(module, function_entries ++ macro_entries, spec_defs),
+            parse_entries(module, function_entries ++ macro_entries, spec_defs,
+              include_not_documented?: true
+            ),
           callbacks: parse_entries(module, callback_entries, callback_defs),
           types: parse_entries(module, type_entries, type_defs)
         }
@@ -65,7 +67,7 @@ defmodule Engine.CodeIntelligence.Docs do
     kind
   end
 
-  defp parse_entries(module, raw_entries, defs) do
+  defp parse_entries(module, raw_entries, defs, opts \\ []) do
     defs_by_name_arity =
       Enum.group_by(
         defs,
@@ -73,13 +75,41 @@ defmodule Engine.CodeIntelligence.Docs do
         fn {_name, _arity, formatted, _quoted} -> formatted end
       )
 
-    raw_entries
-    |> Enum.map(fn raw_entry ->
-      entry = Entry.from_docs_v1(module, raw_entry)
-      defs = Map.get(defs_by_name_arity, {entry.name, entry.arity}, [])
-      %Entry{entry | defs: defs}
-    end)
-    |> Enum.group_by(& &1.name)
+    docs_entries =
+      for raw_entry <- raw_entries do
+        entry = Entry.from_docs_v1(module, raw_entry)
+        entry_defs = Map.get(defs_by_name_arity, {entry.name, entry.arity}, [])
+        %Entry{entry | defs: entry_defs}
+      end
+
+    not_documented_entries =
+      if Keyword.get(opts, :include_not_documented?, false) do
+        docs_names = MapSet.new(docs_entries, & &1.name)
+        docs_name_arities = MapSet.new(docs_entries, &{&1.name, &1.arity})
+
+        for {name, arity, formatted, _quoted} <- defs,
+            not MapSet.member?(docs_name_arities, {name, arity}),
+            not MapSet.member?(docs_names, name) do
+          %Entry{
+            module: module,
+            kind: :function,
+            name: name,
+            arity: arity,
+            signature: [generate_signature(name, arity)],
+            doc: :none,
+            defs: [formatted]
+          }
+        end
+      else
+        []
+      end
+
+    Enum.group_by(docs_entries ++ not_documented_entries, & &1.name)
+  end
+
+  defp generate_signature(name, arity) do
+    args = for i <- 1..arity, do: "arg#{i}"
+    "#{name}(#{Enum.join(args, ", ")})"
   end
 
   defp ok_or({:ok, value}, _default), do: value
