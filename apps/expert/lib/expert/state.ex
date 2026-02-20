@@ -18,7 +18,8 @@ defmodule Expert.State do
 
   defstruct initialized?: false,
             shutdown_received?: false,
-            in_flight_requests: %{}
+            in_flight_requests: %{},
+            deps_declined_projects: MapSet.new()
 
   @supported_code_actions [
     Enumerations.CodeActionKind.quick_fix(),
@@ -166,7 +167,7 @@ defmodule Expert.State do
         ActiveProjects.find_by_root_uri(closest.root_uri) || closest
       end
 
-    if project do
+    if project && not ActiveProjects.blocked?(project) do
       Task.Supervisor.start_child(:expert_task_queue, fn ->
         Expert.Project.Supervisor.ensure_node_started(project)
       end)
@@ -209,7 +210,10 @@ defmodule Expert.State do
 
     case Document.Store.save(uri) do
       :ok ->
-        EngineApi.schedule_compile(project, false)
+        if ActiveProjects.active?(project) do
+          EngineApi.schedule_compile(project, false)
+        end
+
         {:ok, state}
 
       error ->
@@ -233,7 +237,10 @@ defmodule Expert.State do
     for project <- ActiveProjects.projects(),
         change <- params.changes do
       params = filesystem_event(project: Project, uri: change.uri, event_type: change.type)
-      EngineApi.broadcast(project, params)
+
+      if ActiveProjects.active?(project) do
+        EngineApi.broadcast(project, params)
+      end
     end
 
     {:ok, state}
@@ -242,6 +249,17 @@ defmodule Expert.State do
   def apply(%__MODULE__{} = state, msg) do
     Logger.error("Ignoring unhandled message: #{inspect(msg)}")
     {:ok, state}
+  end
+
+  def deps_declined?(%__MODULE__{deps_declined_projects: declined}, %Project{} = project) do
+    MapSet.member?(declined, project.root_uri)
+  end
+
+  def mark_deps_declined(
+        %__MODULE__{deps_declined_projects: declined} = state,
+        %Project{} = project
+      ) do
+    %__MODULE__{state | deps_declined_projects: MapSet.put(declined, project.root_uri)}
   end
 
   def initialize_result do
