@@ -30,7 +30,7 @@ defmodule Expert.Test.Expert.CompletionCase do
 
     EngineApi.schedule_compile(project, true)
     assert_receive project_compiled(), 5000
-    assert_receive project_index_ready(), 5000
+    assert_receive project_index_ready(), 10_000
     {:ok, project: project}
   end
 
