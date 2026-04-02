@@ -99,7 +99,7 @@ defmodule Expert.Configuration do
   end
 
   def on_change(%WorkspaceDidChangeConfiguration{} = change) do
-    apply_config_change(get(), change.params.settings)
+    apply_config_change(get(), normalize_settings(change.params.settings))
   end
 
   defp apply_config_change(%__MODULE__{} = old_config, %{} = settings) do
@@ -111,6 +111,9 @@ defmodule Expert.Configuration do
 
     maybe_watched_extensions_request(new_config, settings)
   end
+
+  defp normalize_settings(settings) when is_map(settings), do: settings
+  defp normalize_settings(_settings), do: %{}
 
   defp set_lsp_log_level(%__MODULE__{} = config, settings) do
     %__MODULE__{config | log_level: parse_lsp_log_level(settings)}
