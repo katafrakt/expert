@@ -91,6 +91,10 @@ defmodule Engine do
   end
 
   def deps_paths do
+    deps_paths(get_project())
+  end
+
+  defp deps_paths(%Project{kind: :mix}) do
     case :persistent_term.get({__MODULE__, :deps_paths}, :error) do
       :error ->
         {:ok, deps_paths} =
@@ -106,6 +110,10 @@ defmodule Engine do
       deps_paths ->
         deps_paths
     end
+  end
+
+  defp deps_paths(%Project{}) do
+    []
   end
 
   def with_lock(lock_type, func) do
