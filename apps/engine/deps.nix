@@ -164,17 +164,17 @@ let
 
       elixir_sense =
         let
-          version = "e3ddc403554050221a2fd19a10a896fa7525bc02";
+          version = "e10a846565a33d843fe4b16fffe46f5abe02d12e";
           drv = buildMix {
             inherit version;
             name = "elixir_sense";
             appConfigPath = ./config;
 
             src = pkgs.fetchFromGitHub {
-              owner = "elixir-lsp";
+              owner = "katafrakt";
               repo = "elixir_sense";
-              rev = "e3ddc403554050221a2fd19a10a896fa7525bc02";
-              hash = "sha256-Rs/c6uduC2xauSwO7FGEVYWiyhNbhSsIcw5s04d+A8M=";
+              rev = "e10a846565a33d843fe4b16fffe46f5abe02d12e";
+              hash = "sha256-n1Z/7XKnKmy9KgRFA8vVjkaIeHLZIPUstkTEaCCvVGM=";
             };
           };
         in
