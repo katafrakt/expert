@@ -1,8 +1,9 @@
-name: Release Expert
+name: Release Expert - Backport
+
 on:
   push:
     branches:
-      - main
+      - v[0-9]+\.[0-9]+
 
 permissions:
   contents: read
@@ -13,7 +14,6 @@ defaults:
 
 jobs:
   release:
-    name: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -23,8 +23,11 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@8bb7a2ed0f90c9802c83129a9488d235a1f31a7c
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
+        with:
+          target-branch: ${{ github.ref_name }}
+          config-file: release-please-config-backports.json
 
   draft:
     name: draft
@@ -38,7 +41,7 @@ jobs:
     steps:
       - env:
           TAG_NAME: ${{ needs.release.outputs.tag_name }}
-        run: gh release edit "${TAG_NAME}" --draft=true --repo='elixir-lang/expert'
+        run: gh release edit "${TAG_NAME}" --draft=true --repo='expert-lsp/expert'
 
   build:
     needs: [release, draft]
@@ -82,9 +85,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - env:
+      - uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        if: ${{ needs.release.outputs.release_created }}
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: ${{ needs.release.outputs.release_created }}
+        with:
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Publish draft release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG_NAME: ${{ needs.release.outputs.tag_name }}
-        run: gh release edit "${TAG_NAME}" --draft=false --repo='elixir-lang/expert'
+        run: gh release edit "${TAG_NAME}" --draft=false --repo='expert-lsp/expert'

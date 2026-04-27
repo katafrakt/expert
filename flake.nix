@@ -70,11 +70,12 @@
           };
           devShell.extraPackages = with pkgs; [
             alejandra
-            zig
+            zig_0_15
             xz
             just
             _7zz
             git
+            zizmor
           ];
         };
       };
