@@ -218,6 +218,21 @@ jobs:
           Set-MpPreference -DisableRealtimeMonitoring $true
           Set-MpPreference -DisableScriptScanning $true
           Set-MpPreference -DisableArchiveScanning $true
+          Write-Host "=== Get-MpPreference (relevant fields) ==="
+          Get-MpPreference | Select-Object `
+            DisableRealtimeMonitoring, `
+            DisableScriptScanning, `
+            DisableArchiveScanning, `
+            DisableBehaviorMonitoring, `
+            DisableIOAVProtection | Format-List
+          Write-Host "=== Get-MpComputerStatus ==="
+          Get-MpComputerStatus | Select-Object `
+            AMRunningMode, `
+            AntivirusEnabled, `
+            RealTimeProtectionEnabled, `
+            IsTamperProtected, `
+            BehaviorMonitorEnabled, `
+            OnAccessProtectionEnabled | Format-List
       - name: Set git to use original line ending (Windows)
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
