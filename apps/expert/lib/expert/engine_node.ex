@@ -35,6 +35,7 @@ defmodule Expert.EngineNode do
     end
 
     @dialyzer {:nowarn_function, start: 3}
+    @dialyzer {:nowarn_function, start: 4}
 
     def start(%__MODULE__{} = state, paths, from, opts \\ []) do
       this_node = to_string(Node.self())
@@ -208,7 +209,7 @@ defmodule Expert.EngineNode do
   end
 
   def start(project, token \\ Progress.noop_token()) do
-    start_net_kernel(project)
+    Expert.Clustering.start_net_kernel()
 
     node_name = Project.node_name(project)
 
@@ -242,15 +243,10 @@ defmodule Expert.EngineNode do
 
   defp prepare_engine(project) do
     Expert.Progress.with_progress("[#{Project.name(project)}] Preparing engine", fn _token ->
-      result = Expert.EngineNode.Builder.build_engine(project)
+      result = Expert.EngineBuilds.request_engine(project)
 
       {:done, result, "Engine is ready"}
     end)
-  end
-
-  defp start_net_kernel(%Project{} = project) do
-    manager = Project.manager_node_name(project)
-    Node.start(manager, :longnames)
   end
 
   defp ensure_apps_started(node, token) do

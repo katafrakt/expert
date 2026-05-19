@@ -12,6 +12,10 @@ defmodule Expert.ConfigurationTest do
     Configuration.new()
     |> Configuration.set()
 
+    on_exit(fn ->
+      :persistent_term.erase(Expert.Configuration)
+    end)
+
     :ok
   end
 
@@ -291,6 +295,16 @@ defmodule Expert.ConfigurationTest do
 
       assert updated.workspace_symbols.min_query_length == 3
     end
+
+    test "preserves previous value when workspaceSymbols is missing" do
+      change = build_change(%{"workspaceSymbols" => %{"minQueryLength" => 0}})
+      {:ok, _updated} = Configuration.on_change(change)
+
+      change = build_change(%{"fileLogLevel" => "error"})
+      {:ok, updated} = Configuration.on_change(change)
+
+      assert updated.workspace_symbols.min_query_length == 0
+    end
   end
 
   describe "on_change/1 with elixirSourcePath" do
@@ -333,6 +347,56 @@ defmodule Expert.ConfigurationTest do
       {:ok, updated} = Configuration.on_change(change)
 
       assert updated.elixir_source_path == nil
+    end
+  end
+
+  describe "on_change/1 with runtime executable paths" do
+    test "stores configured executable paths" do
+      change =
+        build_change(%{
+          "elixirExecutablePath" => "/opt/elixir/bin/elixir",
+          "erlangExecutablePath" => "/opt/erlang/bin/erl"
+        })
+
+      {:ok, updated} = Configuration.on_change(change)
+
+      assert updated.elixir_executable_path == "/opt/elixir/bin/elixir"
+      assert updated.erlang_executable_path == "/opt/erlang/bin/erl"
+    end
+
+    test "preserves configured executable paths when settings are missing" do
+      change =
+        build_change(%{
+          "elixirExecutablePath" => "/opt/elixir/bin/elixir",
+          "erlangExecutablePath" => "/opt/erlang/bin/erl"
+        })
+
+      {:ok, _updated} = Configuration.on_change(change)
+      {:ok, updated} = Configuration.on_change(build_change(%{}))
+
+      assert updated.elixir_executable_path == "/opt/elixir/bin/elixir"
+      assert updated.erlang_executable_path == "/opt/erlang/bin/erl"
+    end
+
+    test "clears configured executable paths when explicit null is sent" do
+      change =
+        build_change(%{
+          "elixirExecutablePath" => "/opt/elixir/bin/elixir",
+          "erlangExecutablePath" => "/opt/erlang/bin/erl"
+        })
+
+      {:ok, _updated} = Configuration.on_change(change)
+
+      change =
+        build_change(%{
+          "elixirExecutablePath" => nil,
+          "erlangExecutablePath" => nil
+        })
+
+      {:ok, updated} = Configuration.on_change(change)
+
+      assert updated.elixir_executable_path == nil
+      assert updated.erlang_executable_path == nil
     end
   end
 

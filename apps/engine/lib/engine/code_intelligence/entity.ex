@@ -1,6 +1,7 @@
 defmodule Engine.CodeIntelligence.Entity do
   alias Forge.Ast
   alias Forge.Ast.Analysis
+  alias Forge.Ast.Detection
   alias Forge.Document
   alias Forge.Document.Position
   alias Forge.Document.Range
@@ -35,6 +36,7 @@ defmodule Engine.CodeIntelligence.Entity do
       |> Engine.CodeIntelligence.Heex.maybe_normalize(position)
 
     with :ok <- check_commented(analysis, position),
+         :ok <- check_in_string(analysis, position),
          {:ok, surround_context} <- Ast.surround_context(analysis, position),
          {:ok, resolved, {begin_pos, end_pos}} <-
            resolve(surround_context, analysis, position) do
@@ -64,11 +66,11 @@ defmodule Engine.CodeIntelligence.Entity do
   end
 
   defp check_commented(%Analysis{} = analysis, %Position{} = position) do
-    if Analysis.commented?(analysis, position) do
-      :error
-    else
-      :ok
-    end
+    if Analysis.commented?(analysis, position), do: {:error, :no_code}, else: :ok
+  end
+
+  defp check_in_string(%Analysis{} = analysis, %Position{} = position) do
+    if Detection.String.detected?(analysis, position), do: {:error, :no_code}, else: :ok
   end
 
   defp resolve(%{context: context, begin: begin_pos, end: end_pos}, analysis, position) do
@@ -135,7 +137,8 @@ defmodule Engine.CodeIntelligence.Entity do
     end
   end
 
-  defp resolve({:struct, charlist}, {{start_line, start_col}, end_pos}, analysis, position) do
+  defp resolve({:struct, charlist}, {{start_line, start_col}, end_pos}, analysis, position)
+       when is_list(charlist) do
     # exclude the leading % from the node range so that it can be
     # resolved like a normal module alias
     node_range = {{start_line, start_col + 1}, end_pos}
@@ -144,6 +147,20 @@ defmodule Engine.CodeIntelligence.Entity do
       {:ok, {struct_or_module, struct}, range} -> {:ok, {struct_or_module, struct}, range}
       :error -> {:error, :not_found}
     end
+  end
+
+  # `Code.Fragment.surround_context` wraps a dot-call in `{:struct, ...}` when
+  # there's a `%` (with optional whitespace) before the alias on the same line.
+  # In valid Elixir `%Foo.bar()` isn't a struct, so this only fires from EEx's
+  # `<% Foo.bar() ... %>`. Drop the `:struct` wrapper and resolve as a dot call.
+  defp resolve(
+         {:struct, {:dot, _, _} = dot_context},
+         {{start_line, start_col}, end_pos},
+         analysis,
+         position
+       ) do
+    node_range = {{start_line, start_col + 1}, end_pos}
+    resolve(dot_context, node_range, analysis, position)
   end
 
   defp resolve({:dot, alias_node, fun_chars}, node_range, analysis, position) do

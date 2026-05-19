@@ -22,6 +22,8 @@ defmodule Expert.Provider.Handlers.HoverTest do
   setup_all do
     project = Fixtures.project()
 
+    start_supervised!({DynamicSupervisor, Expert.EngineBuild.DynamicSupervisor.options()})
+    start_supervised!(Expert.EngineBuilds)
     start_supervised!({Forge.NodePortMapper, []})
     start_supervised!(Expert.Application.document_store_child_spec())
     start_supervised!({Expert.Project.Store, []})
@@ -879,6 +881,32 @@ defmodule Expert.Provider.Handlers.HoverTest do
       assert {:ok, %Structures.Hover{} = result} = hover(project, hovered)
       assert result.contents.kind == "markdown"
       assert String.contains?(result.contents.value, "@unknown_attr")
+    end
+  end
+
+  describe "hover inside strings" do
+    test "returns nil inside a plain string (not interpolation)", %{project: project} do
+      hovered = ~q[
+        defmodule StringHover do
+          def foo do
+            "hello {Str|ing}"
+          end
+        end
+      ]
+
+      assert {:ok, nil} = hover(project, hovered)
+    end
+
+    test "returns a result inside string interpolation", %{project: project} do
+      hovered = ~S[
+        defmodule StringHover do
+          def foo do
+            "hello #{Str|ing}"
+          end
+        end
+      ]
+
+      assert {:ok, %Structures.Hover{}} = hover(project, hovered)
     end
   end
 

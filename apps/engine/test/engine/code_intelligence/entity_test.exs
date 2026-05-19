@@ -643,7 +643,7 @@ defmodule Engine.CodeIntelligence.EntityTest do
         end
       ]
 
-      assert {:error, :not_found} = resolve(code)
+      assert {:error, :no_code} = resolve(code)
     end
   end
 
@@ -1311,6 +1311,87 @@ defmodule Engine.CodeIntelligence.EntityTest do
       ]
 
       assert {:ok, {:call, Kernel, :to_string, 1}, _} = resolve(code)
+    end
+
+    test "resolves remote call inside an `if` expression in HEEx" do
+      code = ~q[
+        defmodule MyLiveView do
+          use Phoenix.Component
+
+          def render(assigns) do
+            ~H"""
+            <%= if SampleApp.va|lid?() do %>
+              Valid
+            <% end %>
+            """
+          end
+        end
+      ]
+
+      assert {:ok, {:call, SampleApp, :valid?, 0}, _} = resolve(code)
+    end
+
+    test "resolves remote call inside an `if` expression in a curly attribute" do
+      code = ~q[
+        defmodule MyLiveView do
+          use Phoenix.Component
+
+          def render(assigns) do
+            ~H"""
+            <div class={if SampleApp.va|lid?(), do: "ok", else: "no"}></div>
+            """
+          end
+        end
+      ]
+
+      assert {:ok, {:call, SampleApp, :valid?, 0}, _} = resolve(code)
+    end
+
+    test "resolves remote call inside a `cond` block in HEEx" do
+      code = ~q[
+        defmodule MyLiveView do
+          use Phoenix.Component
+
+          def render(assigns) do
+            ~H"""
+            <%= cond do %>
+              <% SampleApp.va|lid?() -> %>
+                Valid
+              <% true -> %>
+                Invalid
+            <% end %>
+            """
+          end
+        end
+      ]
+
+      assert {:ok, {:call, SampleApp, :valid?, 0}, _} = resolve(code)
+    end
+  end
+
+  describe "resolve/2 inside a string" do
+    test "does not resolve an ident inside a plain string (not interpolation)" do
+      code = ~q[
+        defmodule MyModule do
+          def my_fun do
+            "hello {wor|ld}"
+          end
+        end
+      ]
+
+      assert {:error, :no_code} = resolve(code)
+    end
+
+    test "resolves an ident inside string interpolation" do
+      code = ~S[
+        defmodule MyModule do
+          def my_fun(world) do
+            "hello #{wor|ld}"
+          end
+        end
+      ]
+
+      assert {:ok, {:variable, :world}, _} = resolve(code)
     end
   end
 
