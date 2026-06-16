@@ -51,6 +51,7 @@ defmodule Engine.MixProject do
       {:elixir_sense, github: "katafrakt/elixir_sense", branch: "track-macro-using"},
       {:forge, path: "../forge"},
       {:gen_lsp, "~> 0.11.3"},
+      {:logger_backends, "~> 1.0"},
       {:patch, "~> 0.15", only: [:dev, :test], runtime: false},
       {:quokka, "~> 2.12", only: [:dev, :test], runtime: false},
       {:path_glob, "~> 0.2"},

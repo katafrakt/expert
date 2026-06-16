@@ -11,8 +11,6 @@ defmodule Engine do
   alias Engine.Progress
   alias Forge.Project
 
-  require Logger
-
   @excluded_apps [:patch, :nimble_parsec]
   @allowed_apps [:engine | Mix.Project.deps_apps()] -- @excluded_apps
 
@@ -99,7 +97,7 @@ defmodule Engine do
       :error ->
         {:ok, deps_paths} =
           Engine.Mix.in_project(fn _ ->
-            Project.ensure_hex_and_rebar()
+            Engine.Mix.ensure_hex_and_rebar()
             Mix.Task.run("loadpaths")
             Mix.Project.deps_paths()
           end)

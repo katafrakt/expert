@@ -1,359 +1,279 @@
 defmodule Engine.Search.Indexer do
   alias Engine.ApplicationCache
-  alias Engine.Progress
-  alias Engine.Search.Indexer
-  alias Engine.Search.Indexer.Extractors
-  alias Forge.Identifier
+  alias Engine.Search.Indexer.Beams
+  alias Engine.Search.Indexer.Manifest
+  alias Engine.Search.Indexer.ManifestStore
+  alias Engine.Search.Indexer.Paths
+  alias Engine.Search.Indexer.Sources
   alias Forge.ProcessCache
   alias Forge.Project
-  alias Forge.Search.Indexer.Entry
 
+  require Logger
   require ProcessCache
 
-  @indexable_extensions "*.{ex,exs}"
+  def create_index(%Project{} = project, backend) when is_atom(backend) do
+    with_indexer_context(fn ->
+      {entries, manifest} = create_index_data(project)
 
-  # Deps files only contribute definitions to the index, so we skip pure-reference
-  # extractors (the most expensive one being FunctionReference, which resolves
-  # aliases and arity on every call site). ModuleAttribute stays because it
-  # produces both definitions and references; the post-filter drops its references.
-  @deps_extractors [
-    Extractors.Module,
-    Extractors.ModuleAttribute,
-    Extractors.FunctionDefinition,
-    Extractors.StructDefinition,
-    Extractors.EctoSchema
-  ]
-
-  def create_index(%Project{} = project) do
-    :ok = ApplicationCache.clear()
-
-    ProcessCache.with_cleanup do
-      dependency_roots = dependency_index_roots(project)
-
-      entries =
-        project
-        |> indexable_files()
-        |> async_chunks(&index_path(&1, dependency_roots))
-
-      {:ok, entries}
-    end
-  after
-    ApplicationCache.clear()
+      replace_index(project, backend, entries, manifest)
+    end)
   end
 
   def update_index(%Project{} = project, backend) do
+    with_indexer_context(fn ->
+      case ManifestStore.load(project) do
+        {:ok, %Manifest{} = manifest} -> refresh_index(project, manifest, backend)
+        :missing -> replace_index(project, backend)
+      end
+    end)
+  end
+
+  defp create_index_data(%Project{} = project) do
+    paths = Paths.for_project(project)
+    {entries, manifest_entries} = index_paths(paths.source_paths, paths.beam_paths)
+
+    {entries, Manifest.new(manifest_entries)}
+  end
+
+  defp replace_index(%Project{} = project, backend) do
+    {entries, manifest} = create_index_data(project)
+
+    replace_index(project, backend, entries, manifest)
+  end
+
+  defp refresh_index(%Project{} = project, %Manifest{} = manifest, backend) do
+    {entries, paths_to_clear, manifest} = update_index_data(project, manifest, backend)
+
+    with :ok <- apply_index_update(project, backend, entries, paths_to_clear) do
+      ManifestStore.commit(project, manifest)
+    end
+  end
+
+  defp replace_index(%Project{} = project, backend, entries, %Manifest{} = manifest) do
+    with :ok <- backend.replace_all(entries),
+         :ok <- maybe_sync(project, backend) do
+      ManifestStore.commit(project, manifest)
+    end
+  end
+
+  defp apply_index_update(project, backend, updated_entries, deleted_paths) do
+    with :ok <- apply_updated_entries(backend, updated_entries),
+         :ok <- apply_deleted_paths(backend, deleted_paths) do
+      maybe_sync(project, backend)
+    end
+  end
+
+  defp apply_updated_entries(backend, updated_entries) do
+    updated_entries
+    |> Enum.group_by(& &1.path)
+    |> Enum.reduce_while(:ok, fn {path, entry_list}, :ok ->
+      apply_index_path(backend, path, entry_list)
+    end)
+  end
+
+  defp apply_deleted_paths(backend, deleted_paths) do
+    Enum.reduce_while(deleted_paths, :ok, fn path, :ok ->
+      apply_index_path(backend, path, [])
+    end)
+  end
+
+  defp apply_index_path(backend, path, entries) do
+    case replace_backend_path(backend, path, entries) do
+      :ok -> {:cont, :ok}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
+
+  defp replace_backend_path(backend, path, entries) do
+    with {:ok, _deleted_ids} <- backend.delete_by_path(path) do
+      backend.insert(entries)
+    end
+  catch
+    :exit, {:timeout, _} ->
+      Logger.warning("Timeout updating index for path: #{path}")
+      :ok
+  end
+
+  defp update_index_data(%Project{} = project, %Manifest{} = manifest, backend) do
+    paths = Paths.for_project(project)
+
+    plan =
+      manifest
+      |> Manifest.plan(paths)
+      |> include_missing_backend_outputs(manifest, paths, backend)
+
+    {entries, manifest_entries, plan} = index_plan(plan, manifest, paths)
+
+    paths_to_clear = Manifest.output_paths_to_clear(manifest, plan, manifest_entries)
+    manifest = Manifest.apply_update(manifest, plan, manifest_entries)
+
+    {entries, paths_to_clear, manifest}
+  end
+
+  defp index_plan(%Manifest.Plan{} = plan, %Manifest{} = manifest, %Paths{} = paths) do
+    {source_entries, source_manifest_entries} = Sources.index(plan.source_paths_to_index)
+
+    {beam_entries, beam_manifest_entries, beam_paths_to_index} =
+      index_beam_plan(plan, manifest, paths)
+
+    plan = %Manifest.Plan{plan | beam_paths_to_index: beam_paths_to_index}
+
+    {source_entries ++ beam_entries, source_manifest_entries ++ beam_manifest_entries, plan}
+  end
+
+  # Search entries use the source file path as their `path`. They do not carry the
+  # BEAM file path because entries model searchable source symbols. The BEAM input
+  # path is incremental-indexing state, tracked by the manifest.
+  #
+  # A single source file can produce multiple BEAM files. For example:
+  #
+  #   defmodule Parent do
+  #     defmodule Child do
+  #     end
+  #   end
+  #
+  # produces both `Elixir.Parent.beam` and `Elixir.Parent.Child.beam`. Entries from
+  # both BEAM files are stored under the same source path.
+  #
+  # Updating the index for a source path is a full replacement: delete all existing
+  # entries for that source path, then insert the entries from this indexing pass.
+  # If we index only a newly discovered child BEAM, the replacement set contains
+  # only child entries, so existing parent entries for the same source path would be
+  # deleted.
+  #
+  # Supporting narrower replacement would require storing BEAM-origin paths in
+  # the search store which would potentially increase the index size by a lot
+  # in large codebases. As a compromise, this keeps the existing source-path
+  # replacement model and only reindexes known BEAMs that share a source path
+  # with the new BEAM.
+  defp index_beam_plan(%Manifest.Plan{beam_paths_to_index: []}, _manifest, _paths) do
+    {[], [], []}
+  end
+
+  defp index_beam_plan(%Manifest.Plan{} = plan, %Manifest{} = manifest, %Paths{} = paths) do
+    {entries, manifest_entries} = Beams.index(plan.beam_paths_to_index)
+    sibling_paths = beam_sibling_paths(plan, manifest, paths, manifest_entries)
+
+    case sibling_paths do
+      [] ->
+        {entries, manifest_entries, plan.beam_paths_to_index}
+
+      [_ | _] ->
+        {sibling_entries, sibling_manifest_entries} = Beams.index(sibling_paths)
+
+        {entries ++ sibling_entries, manifest_entries ++ sibling_manifest_entries,
+         Enum.uniq(plan.beam_paths_to_index ++ sibling_paths)}
+    end
+  end
+
+  defp beam_sibling_paths(
+         %Manifest.Plan{} = plan,
+         %Manifest{} = manifest,
+         %Paths{} = paths,
+         manifest_entries
+       ) do
+    new_beam_paths =
+      plan.beam_paths_to_index
+      |> Enum.filter(&(Manifest.fetch(manifest, &1) == :error))
+      |> MapSet.new()
+
+    output_paths =
+      for %Manifest.Entry{kind: :beam, input_path: input_path, output_path: output_path} <-
+            manifest_entries,
+          is_binary(output_path),
+          MapSet.member?(new_beam_paths, input_path),
+          into: MapSet.new() do
+        output_path
+      end
+
+    current_beam_paths = MapSet.new(paths.beam_paths)
+    planned_beam_paths = MapSet.new(plan.beam_paths_to_index)
+
+    for %Manifest.Entry{kind: :beam, input_path: input_path, output_path: output_path} <-
+          Manifest.entries(manifest),
+        is_binary(output_path),
+        MapSet.member?(output_paths, output_path),
+        MapSet.member?(current_beam_paths, input_path),
+        not MapSet.member?(planned_beam_paths, input_path) do
+      input_path
+    end
+  end
+
+  defp include_missing_backend_outputs(
+         %Manifest.Plan{} = plan,
+         %Manifest{} = manifest,
+         paths,
+         backend
+       ) do
+    backend_paths = backend_indexed_paths(backend)
+    source_paths = MapSet.new(paths.source_paths)
+    beam_paths = MapSet.new(paths.beam_paths)
+
+    {missing_source_paths, missing_beam_paths} =
+      manifest
+      |> Manifest.entries()
+      |> Enum.reduce({[], []}, fn
+        %Manifest.Entry{input_path: input_path, output_path: output_path, kind: :source},
+        {source_acc, beam_acc}
+        when is_binary(output_path) ->
+          if MapSet.member?(source_paths, input_path) and
+               not MapSet.member?(backend_paths, output_path) do
+            {[input_path | source_acc], beam_acc}
+          else
+            {source_acc, beam_acc}
+          end
+
+        %Manifest.Entry{input_path: input_path, output_path: output_path, kind: :beam},
+        {source_acc, beam_acc}
+        when is_binary(output_path) ->
+          if MapSet.member?(beam_paths, input_path) and
+               not MapSet.member?(backend_paths, output_path) do
+            {source_acc, [input_path | beam_acc]}
+          else
+            {source_acc, beam_acc}
+          end
+
+        _entry, acc ->
+          acc
+      end)
+
+    %Manifest.Plan{
+      plan
+      | source_paths_to_index: Enum.uniq(plan.source_paths_to_index ++ missing_source_paths),
+        beam_paths_to_index: Enum.uniq(plan.beam_paths_to_index ++ missing_beam_paths)
+    }
+  end
+
+  defp index_paths(source_paths, beam_paths) do
+    {source_entries, source_manifest_entries} = Sources.index(source_paths)
+    {beam_entries, beam_manifest_entries} = Beams.index(beam_paths)
+
+    {source_entries ++ beam_entries, source_manifest_entries ++ beam_manifest_entries}
+  end
+
+  defp backend_indexed_paths(backend) do
+    MapSet.new()
+    |> backend.reduce(fn
+      %{path: path}, paths when is_binary(path) -> MapSet.put(paths, path)
+      _entry, paths -> paths
+    end)
+  end
+
+  defp with_indexer_context(fun) when is_function(fun, 0) do
     :ok = ApplicationCache.clear()
 
     ProcessCache.with_cleanup do
-      do_update_index(project, backend)
+      fun.()
     end
   after
     ApplicationCache.clear()
   end
 
-  defp do_update_index(%Project{} = project, backend) do
-    path_to_ids =
-      backend.reduce(%{}, fn
-        %Entry{path: path} = entry, path_to_ids when is_integer(entry.id) ->
-          Map.update(path_to_ids, path, entry.id, &max(&1, entry.id))
-
-        _entry, path_to_ids ->
-          path_to_ids
-      end)
-
-    project_files =
-      project
-      |> indexable_files()
-      |> MapSet.new()
-
-    previously_indexed_paths = MapSet.new(path_to_ids, fn {path, _} -> path end)
-
-    new_paths = MapSet.difference(project_files, previously_indexed_paths)
-
-    {paths_to_examine, paths_to_delete} =
-      Enum.split_with(path_to_ids, fn {path, _id} ->
-        MapSet.member?(project_files, path) and File.regular?(path)
-      end)
-
-    changed_paths =
-      for {path, id} <- paths_to_examine,
-          newer_than?(path, id) do
-        path
-      end
-
-    paths_to_delete = Enum.map(paths_to_delete, &elem(&1, 0))
-
-    paths_to_reindex = changed_paths ++ Enum.to_list(new_paths)
-    dependency_roots = dependency_index_roots(project)
-
-    entries = async_chunks(paths_to_reindex, &index_path(&1, dependency_roots))
-
-    {:ok, entries, paths_to_delete}
-  end
-
-  defp index_path(path, dependency_roots) do
-    in_dependency? = contained_in_any?(path, dependency_roots)
-    extractors = if in_dependency?, do: @deps_extractors
-
-    with {:ok, contents} <- File.read(path),
-         {:ok, entries} <- Indexer.Source.index(path, contents, extractors) do
-      if in_dependency? do
-        Enum.filter(entries, &(&1.subtype == :definition))
-      else
-        entries
-      end
+  defp maybe_sync(project, backend) do
+    if function_exported?(backend, :sync, 1) do
+      backend.sync(project)
     else
-      _ ->
-        []
+      :ok
     end
   end
-
-  # 128 K blocks indexed expert in 5.3 seconds
-  @bytes_per_block 1024 * 128
-
-  defp async_chunks(file_paths, processor, timeout \\ :infinity) do
-    # this function tries to even out the amount of data processed by
-    # async stream by making each chunk emitted by the initial stream to
-    # be roughly equivalent
-
-    # Shuffling the results helps speed in some projects, as larger files tend to clump
-    # together, like when there are auto-generated elixir modules.
-    paths_to_sizes =
-      file_paths
-      |> path_to_sizes()
-      |> Enum.shuffle()
-
-    total_bytes = paths_to_sizes |> Enum.map(&elem(&1, 1)) |> Enum.sum()
-
-    if total_bytes > 0 do
-      process_chunks(paths_to_sizes, total_bytes, processor, timeout)
-    else
-      []
-    end
-  end
-
-  defp process_chunks(paths_to_sizes, total_bytes, processor, timeout) do
-    path_to_size_map = Map.new(paths_to_sizes)
-
-    Progress.with_tracked_progress("Indexing source code", total_bytes, fn report ->
-      start_time = System.monotonic_time(:millisecond)
-      result = do_process_chunks(paths_to_sizes, path_to_size_map, processor, timeout, report)
-      elapsed = System.monotonic_time(:millisecond) - start_time
-      {:done, result, "Completed in #{format_duration(elapsed)}"}
-    end)
-  end
-
-  defp do_process_chunks(paths_to_sizes, path_to_size_map, processor, timeout, report) do
-    initial_state = {0, []}
-
-    chunk_fn = fn {path, file_size}, {block_size, paths} ->
-      new_block_size = file_size + block_size
-      new_paths = [path | paths]
-
-      if new_block_size >= @bytes_per_block do
-        {:cont, new_paths, initial_state}
-      else
-        {:cont, {new_block_size, new_paths}}
-      end
-    end
-
-    after_fn = fn
-      {_, []} -> {:cont, []}
-      {_, paths} -> {:cont, paths, []}
-    end
-
-    paths_to_sizes
-    |> Stream.chunk_while(initial_state, chunk_fn, after_fn)
-    |> Task.async_stream(
-      fn chunk ->
-        block_bytes = chunk |> Enum.map(&Map.get(path_to_size_map, &1)) |> Enum.sum()
-
-        report.(message: "Indexing", add: block_bytes)
-
-        Enum.flat_map(chunk, processor)
-      end,
-      timeout: timeout
-    )
-    |> Stream.flat_map(fn
-      {:ok, entries} -> entries
-      _ -> []
-    end)
-    |> Enum.to_list()
-  end
-
-  defp format_duration(ms) when ms < 1000, do: "#{ms}ms"
-  defp format_duration(ms), do: "#{Float.round(ms / 1000, 1)}s"
-
-  defp path_to_sizes(paths) do
-    Enum.reduce(paths, [], fn file_path, acc ->
-      case File.stat(file_path) do
-        {:ok, %File.Stat{} = stat} ->
-          [{file_path, stat.size} | acc]
-
-        _ ->
-          acc
-      end
-    end)
-  end
-
-  defp newer_than?(path, entry_id) do
-    case stat(path) do
-      {:ok, %File.Stat{} = stat} ->
-        stat.mtime > Identifier.to_erl(entry_id)
-
-      _ ->
-        false
-    end
-  end
-
-  def indexable_files(%Project{} = project) do
-    roots = index_roots(project)
-    excluded_roots = build_exclusion_roots(project, roots)
-
-    roots
-    |> Enum.flat_map(&indexable_files_in/1)
-    |> Enum.uniq()
-    |> reject_paths_under(excluded_roots)
-  end
-
-  defp indexable_files_in(root) do
-    Forge.Path.glob([root, "**", @indexable_extensions])
-  end
-
-  defp index_roots(%Project{} = project) do
-    [Project.root_path(project) | dependency_index_roots(project)]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-  end
-
-  defp reject_paths_under(paths, []), do: paths
-
-  defp reject_paths_under(paths, roots) do
-    Enum.reject(paths, &contained_in_any?(&1, roots))
-  end
-
-  defp contained_in_any?(path, roots) do
-    Enum.any?(roots, &Forge.Path.contains?(path, &1))
-  end
-
-  defp build_exclusion_roots(%Project{kind: :mix} = project, index_roots) do
-    {runtime_build_path, configured_build_root} = build_paths(project)
-    relative_build_root = Path.relative_to(configured_build_root, Project.root_path(project))
-
-    dependency_build_roots = Enum.map(index_roots, &Path.expand(relative_build_root, &1))
-
-    [runtime_build_path, configured_build_root | dependency_build_roots]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-  end
-
-  defp build_exclusion_roots(%Project{}, _index_roots), do: []
-
-  # stat(path) is here for testing so it can be mocked
-  defp stat(path) do
-    File.stat(path)
-  end
-
-  defp dependency_index_roots(%Project{kind: :mix} = project) do
-    [deps_path(project) | path_dependency_source_roots(project)]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-  end
-
-  defp dependency_index_roots(%Project{}), do: []
-
-  defp deps_path(%Project{kind: :mix} = project) do
-    case Engine.Mix.in_project(project, fn _ -> Mix.Project.deps_path() end) do
-      {:ok, path} -> path
-      _ -> Mix.Project.deps_path()
-    end
-  end
-
-  defp path_dependency_source_roots(%Project{} = project) do
-    case Engine.Mix.in_project(project, fn _ ->
-           path_dependency_paths(Mix.Project.config(), Mix.env())
-         end) do
-      {:ok, roots} -> Enum.flat_map(roots, &mix_source_roots/1)
-      _ -> []
-    end
-  end
-
-  defp path_dependency_paths(config, env) do
-    config
-    |> Keyword.get(:deps, [])
-    |> Enum.flat_map(&path_dependency_path(&1, env))
-  end
-
-  defp path_dependency_path({_app, opts}, env) when is_list(opts) do
-    path_dependency_path_from_opts(opts, env)
-  end
-
-  defp path_dependency_path({_app, _requirement, opts}, env) when is_list(opts) do
-    path_dependency_path_from_opts(opts, env)
-  end
-
-  defp path_dependency_path(_dep, _env), do: []
-
-  defp path_dependency_path_from_opts(opts, env) do
-    path = Keyword.get(opts, :path)
-    only_envs = opts |> Keyword.get(:only) |> List.wrap()
-
-    if is_binary(path) and dependency_active_in_env?(only_envs, env) do
-      [Path.expand(path, File.cwd!())]
-    else
-      []
-    end
-  end
-
-  defp dependency_active_in_env?([], _env), do: true
-  defp dependency_active_in_env?(envs, env), do: env in envs
-
-  defp mix_source_roots(root) do
-    project = root |> Forge.Document.Path.to_uri() |> Project.new()
-
-    source_paths =
-      case Engine.Mix.in_project(project, fn _ ->
-             Keyword.get(Mix.Project.config(), :elixirc_paths, ["lib"])
-           end) do
-        {:ok, paths} -> paths
-        _ -> ["lib"]
-      end
-
-    Enum.map(source_paths, &Path.expand(&1, root))
-  end
-
-  defp build_paths(%Project{kind: :mix} = project) do
-    case Engine.Mix.in_project(project, fn project_module ->
-           {Mix.Project.build_path(), configured_build_root(project, project_module.project())}
-         end) do
-      {:ok, paths} -> paths
-      _ -> {Mix.Project.build_path(), configured_build_root(project, [])}
-    end
-  end
-
-  defp configured_build_root(%Project{} = project, config) do
-    config = Keyword.put_new(config, :build_per_environment, true)
-
-    with_deleted_env("MIX_BUILD_PATH", fn ->
-      File.cd!(Project.root_path(project), fn ->
-        config
-        |> Mix.Project.build_path()
-        |> Path.dirname()
-      end)
-    end)
-  end
-
-  defp with_deleted_env(name, fun) do
-    original = System.fetch_env(name)
-    System.delete_env(name)
-
-    try do
-      fun.()
-    after
-      restore_env(name, original)
-    end
-  end
-
-  defp restore_env(name, {:ok, value}), do: System.put_env(name, value)
-  defp restore_env(name, :error), do: System.delete_env(name)
 end

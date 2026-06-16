@@ -18,6 +18,7 @@ defmodule Expert.Port do
 
   @default_unix_path "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   @path_marker "__EXPERT_PATH__"
+  @path_fetch_cmd_timeout_ms 5_000
 
   # These variables are interpreted by release, Elixir, or Erlang launchers and
   # must not leak from Expert's own runtime into project runtime detection.
@@ -32,9 +33,12 @@ defmodule Expert.Port do
     "ROOTDIR",
     "BINDIR",
     "RELEASE_SYS_CONFIG",
-    "MIX_HOME",
     "MIX_ARCHIVES",
-    "MIX_ENV"
+    "MIX_INSTALL_DIR",
+    "MIX_HOME",
+    "MIX_ENV",
+    "MIX_REBAR3",
+    "REBAR_CACHE_DIR"
   ]
 
   @doc """
@@ -279,7 +283,7 @@ defmodule Expert.Port do
     env = [
       {"EXPERT_PROJECT_ROOT", directory},
       {"SHELL_SESSIONS_DISABLE", "1"},
-      {"PATH", System.get_env("PATH", @default_unix_path)}
+      {"PATH", system_path_without_release_root()}
     ]
 
     shell
@@ -310,7 +314,7 @@ defmodule Expert.Port do
   end
 
   defp run_path_fetch_command(args, shell, env) do
-    case cmd_with_timeout(shell, args, env, 1_000) do
+    case cmd_with_timeout(shell, args, env, @path_fetch_cmd_timeout_ms) do
       {:ok, {output, exit_code}} ->
         {:ok, path_from_output(output, exit_code)}
 
@@ -356,15 +360,12 @@ defmodule Expert.Port do
     path = prepend_configured_erlang_path(path)
 
     System.get_env()
+    |> Enum.reject(fn {key, _value} -> key in @scrubbed_env_vars end)
     |> Enum.map(&sanitize_system_env_var(&1, path))
   end
 
   defp sanitize_system_env_var({key, _value}, path) when key in ["PATH", "Path"] do
     {key, path}
-  end
-
-  defp sanitize_system_env_var({key, _value}, _path) when key in @scrubbed_env_vars do
-    {key, ""}
   end
 
   defp sanitize_system_env_var({key, value}, _path) do
@@ -384,13 +385,23 @@ defmodule Expert.Port do
 
   defp open_executable(executable, opts) do
     opts =
-      if Keyword.has_key?(opts, :env) do
-        Keyword.update!(opts, :env, &ensure_charlists/1)
-      else
-        opts
-      end
+      opts
+      |> Keyword.update(:env, scrub_env([]), &scrub_env/1)
+      |> Keyword.update!(:env, &ensure_charlists/1)
 
     open_port(Forge.OS.os_type(), executable, opts)
+  end
+
+  @doc false
+  def scrub_env(env) do
+    already_set = MapSet.new(env, fn {key, _value} -> to_string(key) end)
+
+    scrub_entries =
+      for var <- @scrubbed_env_vars, var not in already_set do
+        {var, ""}
+      end
+
+    scrub_entries ++ env
   end
 
   defp open_port(:win32, executable, opts) do

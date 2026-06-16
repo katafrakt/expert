@@ -104,7 +104,7 @@ defmodule Expert do
   def handle_request(request, lsp) do
     with {:ok, handler} <- fetch_handler(request),
          {:ok, context} <- check_engine_initialized(request),
-         {:ok, request} <- Convert.to_native(request),
+         {:ok, request} <- Convert.to_native(request, context_document(context)),
          {:ok, response} <- handler.handle(request, context),
          {:ok, response} <- Expert.Protocol.Convert.to_lsp(response) do
       {:reply, response, lsp}
@@ -145,6 +145,9 @@ defmodule Expert do
          }, lsp}
     end
   end
+
+  defp context_document(%{document: %Forge.Document{} = document}), do: document
+  defp context_document(_), do: nil
 
   defp check_engine_initialized(request) do
     if document_request?(request) do
@@ -225,22 +228,8 @@ defmodule Expert do
   end
 
   def handle_notification(notification, lsp) do
-    with {:ok, handler} <- fetch_handler(notification),
-         {:ok, notification} <- Convert.to_native(notification),
-         {:ok, _response} <- handler.handle(notification, nil) do
-      {:noreply, lsp}
-    else
-      {:error, {:unhandled, _}} ->
-        Logger.info("Unhandled notification: #{notification.method}")
-
-        {:noreply, lsp}
-
-      error ->
-        message = "Failed to handle #{notification.method}, #{inspect(error)}"
-        Logger.error(message)
-
-        {:noreply, lsp}
-    end
+    Logger.info("Unhandled notification: #{notification.method}")
+    {:noreply, lsp}
   end
 
   def handle_info({:engine_initialized, project, {:ok, _pid}}, lsp) do
