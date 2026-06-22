@@ -24,7 +24,15 @@ defmodule Expert.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :runtime_tools, :kernel, :wx, :observer, :telemetry],
+      extra_applications: [
+        :logger,
+        :runtime_tools,
+        :kernel,
+        :wx,
+        :observer,
+        :telemetry,
+        :hex_core
+      ],
       mod: {Expert.Application, []}
     ]
   end
@@ -102,13 +110,14 @@ defmodule Expert.MixProject do
       {:engine, path: "../engine", only: [:test]},
       {:forge, path: "../forge"},
       {:gen_lsp, "~> 0.11.3"},
+      {:hex_core, "~> 0.10"},
       {:jason, "~> 1.4"},
       {:patch, "~> 0.15", runtime: false, only: [:dev, :test]},
       {:quokka, "~> 2.12", only: [:dev, :test], runtime: false},
       {:path_glob, "~> 0.2"},
       {:phoenix_live_view, "~> 1.0", only: [:test], runtime: false},
       {:schematic, "~> 0.2"},
-      {:sourceror, "~> 1.10.1"}
+      {:sourceror, "~> 1.12.2"}
     ]
   end
 end

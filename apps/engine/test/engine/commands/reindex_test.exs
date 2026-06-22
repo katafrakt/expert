@@ -12,15 +12,21 @@ defmodule Engine.Commands.ReindexTest do
   alias Forge.Document
 
   setup context do
+    debounce_interval_millis = Map.get(context, :debounce_interval_millis, 0)
+
     case Map.get(context, :reindex_fun, :sleep) do
       :default ->
-        start_supervised!(Reindex)
-
-      :sleep ->
-        start_supervised!({Reindex, reindex_fun: fn _ -> Process.sleep(20) end})
+        start_supervised!({Reindex, debounce_interval_millis: debounce_interval_millis})
 
       :none ->
         :ok
+
+      :sleep ->
+        start_supervised!(
+          {Reindex,
+           reindex_fun: fn _ -> Process.sleep(20) end,
+           debounce_interval_millis: debounce_interval_millis}
+        )
     end
 
     {:ok, project: project()}
