@@ -96,12 +96,6 @@ let
           ${old.buildPhase}
         '';
       };
-
-    exqlite = _unusedArgs: old: {
-      preConfigure = (old.preConfigure or "") + ''
-        export ELIXIR_MAKE_CACHE_DIR="$TMPDIR/elixir_make"
-      '';
-    };
   };
 
   defaultOverrides = (
@@ -121,11 +115,6 @@ let
               name = "nightly-2024-11-01";
               sha256 = "sha256-wq7bZ1/IlmmLkSa3GUJgK17dTWcKyf5A+ndS9yRwB88=";
             };
-          }
-        ];
-        exqlite = [
-          {
-            name = "exqlite";
           }
         ];
         snappyer = [

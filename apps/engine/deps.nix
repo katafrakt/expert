@@ -164,7 +164,7 @@ let
 
       elixir_sense =
         let
-          version = "fb9ee0e68db8b46fbff4d7a78ee4bb7f63db0669";
+          version = "da065ae9ccc125d05b901b9eb6981ff559a8f9f1";
           drv = buildMix {
             inherit version;
             name = "elixir_sense";
@@ -173,8 +173,8 @@ let
             src = pkgs.fetchFromGitHub {
               owner = "elixir-lsp";
               repo = "elixir_sense";
-              rev = "fb9ee0e68db8b46fbff4d7a78ee4bb7f63db0669";
-              hash = "sha256-mFhHK0CmnWw6TP3WpVJ/ckihvWZTBZrA7gwj/pGtHME=";
+              rev = "da065ae9ccc125d05b901b9eb6981ff559a8f9f1";
+              hash = "sha256-hIWAon1kttZNjm2z1NubUEqtXjCZabyifbGyAvkfjF8=";
             };
           };
         in
@@ -288,27 +288,6 @@ let
 
             beamDeps = [
               nimble_parsec
-            ];
-          };
-        in
-        drv;
-
-      refactorex =
-        let
-          version = "0.1.52";
-          drv = buildMix {
-            inherit version;
-            name = "refactorex";
-            appConfigPath = ./config;
-
-            src = fetchHex {
-              inherit version;
-              pkg = "refactorex";
-              sha256 = "4927fe6c3acd1f4695d6d3e443380167d61d004d507b1279c6084433900c94d0";
-            };
-
-            beamDeps = [
-              sourceror
             ];
           };
         in
