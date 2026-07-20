@@ -36,7 +36,8 @@ defmodule Engine.CodeMod.Rename.Prepare do
   end
 
   @spec resolve(Analysis.t(), Position.t()) ::
-          {:ok, {atom(), atom()}, Range.t()} | {:error, tuple() | atom()}
+          {:ok, {:function, {module(), atom(), non_neg_integer()}}, Range.t()}
+          | {:error, tuple() | atom()}
   def resolve(%Analysis{} = analysis, %Position{} = position) do
     prepare_result =
       Enum.find_value(@renaming_modules, fn module ->

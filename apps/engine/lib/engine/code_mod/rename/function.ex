@@ -3,6 +3,8 @@ defmodule Engine.CodeMod.Rename.Function do
   Handles function renaming using the search index for locating all definitions
   and references, and text-based edits for performing the rename.
   """
+  import Forge.Document.Line
+
   alias Engine.CodeIntelligence.Entity
   alias Engine.CodeMod.Rename.Entry, as: RenameEntry
   alias Engine.Search.Store
@@ -10,11 +12,8 @@ defmodule Engine.CodeMod.Rename.Function do
   alias Forge.Ast.Analysis
   alias Forge.Document
   alias Forge.Document.Edit
-  alias Forge.Document.Line
   alias Forge.Document.Position
   alias Forge.Document.Range
-
-  import Line
 
   @spec recognizes?(Analysis.t(), Position.t()) :: boolean()
   def recognizes?(%Analysis{} = analysis, %Position{} = position) do
@@ -36,7 +35,7 @@ defmodule Engine.CodeMod.Rename.Function do
   def rename(%Range{} = _range, new_name, {module, fun_name, arity}) do
     subject_prefix = Subject.mfa(module, fun_name, arity)
 
-    case Store.prefix(subject_prefix, type: {:function, :_}) do
+    case Store.exact(subject_prefix, type: {:function, :_}) do
       {:ok, entries} ->
         entries
         |> Enum.map(&RenameEntry.new/1)
@@ -51,29 +50,33 @@ defmodule Engine.CodeMod.Rename.Function do
   end
 
   defp resolve(%Analysis{} = analysis, %Position{} = position) do
-    with {:ok, {:call, module, fun_name, arity}, range}
-         when not is_nil(module) <- Entity.resolve(analysis, position) do
-      {:ok, {:function, {module, fun_name, arity}}, range}
-    else
-      _ -> {:error, :not_a_renamable_function}
+    case Entity.resolve(analysis, position) do
+      {:ok, {:call, module, fun_name, arity}, range}
+      when not is_nil(module) ->
+        {:ok, {:function, {module, fun_name, arity}}, range}
+
+      _ ->
+        {:error, :not_a_renamable_function}
     end
   end
 
   defp rename_file(uri, entries, fun_name, new_name) do
-    with {:ok, document} <- Document.Store.open_temporary(uri) do
-      edits =
-        entries
-        |> Enum.map(&compute_function_name_range(&1, fun_name))
-        |> Enum.reject(&is_nil/1)
-        |> Enum.map(&Edit.new(new_name, &1))
+    case Document.Store.open_temporary(uri) do
+      {:ok, document} ->
+        edits =
+          entries
+          |> Enum.map(&compute_function_name_range(&1, fun_name))
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&Edit.new(new_name, &1))
 
-      if edits == [] do
+        if edits == [] do
+          []
+        else
+          [Document.Changes.new(document, edits)]
+        end
+
+      _ ->
         []
-      else
-        [Document.Changes.new(document, edits)]
-      end
-    else
-      _ -> []
     end
   end
 
@@ -99,8 +102,6 @@ defmodule Engine.CodeMod.Rename.Function do
             %{entry.range.start | character: end_character}
           )
       end
-    else
-      nil
     end
   end
 

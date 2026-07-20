@@ -1,16 +1,16 @@
 defmodule Engine.CodeMod.RenameTest do
-  alias Engine.CodeMod.Rename
-  alias Engine.Search
-  alias Engine.Search.Store.Backends
-  alias Forge.Document
-
   use ExUnit.Case, async: false
   use Patch
 
   import Forge.Test.CodeSigil
   import Forge.Test.CursorSupport
-  import Forge.Test.Fixtures
   import Forge.Test.EventualAssertions
+  import Forge.Test.Fixtures
+
+  alias Engine.CodeMod.Rename
+  alias Engine.Search
+  alias Engine.Search.Store.Backends
+  alias Forge.Document
 
   setup do
     project = project()
@@ -18,12 +18,13 @@ defmodule Engine.CodeMod.RenameTest do
     Backends.Ets.destroy_all(project)
     Engine.set_project(project)
 
+    start_supervised!(Engine.ApplicationCache)
     start_supervised!({Document.Store, derive: [analysis: &Forge.Ast.analyze/1]})
     start_supervised!(Engine.Dispatch)
     start_supervised!(Backends.Ets)
 
     start_supervised!(
-      {Search.Store, [project, fn _ -> {:ok, []} end, fn _, _ -> {:ok, [], []} end, Backends.Ets]}
+      {Search.Store, [project, fn _, _ -> :ok end, fn _, _ -> :ok end, Backends.Ets]}
     )
 
     Search.Store.enable()
