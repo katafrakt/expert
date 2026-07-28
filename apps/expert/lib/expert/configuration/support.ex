@@ -12,6 +12,11 @@ defmodule Expert.Configuration.Support do
       :code_action,
       :dynamic_registration
     ],
+    code_action_resolve: [
+      :text_document,
+      :code_action,
+      :resolve_support
+    ],
     hierarchical_symbols: [
       :text_document,
       :document_symbol,
@@ -50,6 +55,7 @@ defmodule Expert.Configuration.Support do
   ]
 
   defstruct code_action_dynamic_registration: false,
+            code_action_resolve: false,
             hierarchical_symbols: false,
             snippet: false,
             deprecated: false,

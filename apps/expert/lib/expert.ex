@@ -5,6 +5,7 @@ defmodule Expert do
   alias Expert.Project.Store
   alias Expert.Protocol.Convert
   alias Expert.Protocol.Id
+  alias Expert.Provider.Handler
   alias Expert.Provider.Handlers
   alias Expert.State
   alias Forge.Project
@@ -103,7 +104,7 @@ defmodule Expert do
 
   def handle_request(request, lsp) do
     with {:ok, handler} <- fetch_handler(request),
-         {:ok, context} <- check_engine_initialized(request),
+         {:ok, context} <- check_engine_initialized(request, handler),
          {:ok, request} <- Convert.to_native(request, context_document(context)),
          {:ok, response} <- handler.handle(request, context),
          {:ok, response} <- Expert.Protocol.Convert.to_lsp(response) do
@@ -149,12 +150,12 @@ defmodule Expert do
   defp context_document(%{document: %Forge.Document{} = document}), do: document
   defp context_document(_), do: nil
 
-  defp check_engine_initialized(request) do
+  defp check_engine_initialized(request, handler) do
     if document_request?(request) do
       projects = Store.projects()
 
       with {:ok, context} <- Lookup.resolve_from_request(request, projects) do
-        if Store.ready?(context.project) do
+        if !Handler.requires_engine?(handler) or Store.ready?(context.project) do
           {:ok, context}
         else
           {:error, :engine_not_initialized, context.project}
@@ -172,6 +173,15 @@ defmodule Expert do
   end
 
   defp document_request?(%{text_document: %{uri: _}}), do: true
+
+  # These code actions carry a document uri in their data payload, so we treat them as document
+  # requests by virtue of that uri (rather than by strict LSP taxonomy). Scoped to the "refactor"
+  # provider for now so other requests are unaffected; can be broadened later.
+  defp document_request?(%Structures.CodeAction{data: %{"provider" => "refactor", "uri" => uri}})
+       when is_binary(uri) do
+    true
+  end
+
   defp document_request?(_), do: false
 
   def handle_notification(%GenLSP.Notifications.Initialized{}, lsp) do
@@ -235,6 +245,8 @@ defmodule Expert do
   def handle_info({:engine_initialized, project, {:ok, _pid}}, lsp) do
     Store.transition(project, :ready)
 
+    State.propagate_elixir_source_path_for(project)
+
     Logger.info(
       "Engine initialized for project #{Project.name(project)}",
       project: project
@@ -275,34 +287,41 @@ defmodule Expert do
   defp maybe_prompt_deps_fetch(lsp, project) do
     state = assigns(lsp).state
 
-    supports_show_message = Expert.Configuration.client_support(:show_message)
+    supports_show_message = show_message_supported?()
+    auto_fetch_dependencies? = Expert.Configuration.auto_fetch_dependencies?()
 
     # Avoids spamming the user with the same prompt if they already declined
     deps_declined = State.deps_declined?(state, project)
 
-    if supports_show_message && not deps_declined do
-      Store.transition(project, :blocked)
+    cond do
+      auto_fetch_dependencies? and not Store.blocked?(project) ->
+        Store.transition(project, :blocked)
+        start_deps_fetch_task(lsp, project)
 
-      response = prompt_deps_fetch(lsp, project)
+      supports_show_message and not deps_declined and not Store.blocked?(project) ->
+        Store.transition(project, :blocked)
 
-      handle_deps_fetch_result(response, lsp, project)
-    else
-      if deps_declined do
-        Logger.info(
-          "Engine failed due to dependency errors, but user declined to fetch dependencies.",
-          project: project
-        )
-      end
+        response = prompt_deps_fetch(lsp, project)
 
-      if !supports_show_message do
-        log_error(
-          lsp,
-          project,
-          "Engine failed due to dependency errors, but client does not support showing messages. Run 'mix deps.get' to fetch dependencies for #{Project.name(project)} and then restart Expert or your editor."
-        )
-      end
+        handle_deps_fetch_result(response, lsp, project)
 
-      lsp
+      true ->
+        if deps_declined do
+          Logger.info(
+            "Engine failed due to dependency errors, but user declined to fetch dependencies.",
+            project: project
+          )
+        end
+
+        if !supports_show_message do
+          log_error(
+            lsp,
+            project,
+            "Engine failed due to dependency errors, but client does not support showing messages. Run 'mix deps.get' to fetch dependencies for #{Project.name(project)} and then restart Expert or your editor."
+          )
+        end
+
+        lsp
     end
   end
 
@@ -416,6 +435,13 @@ defmodule Expert do
     handle_deps_fetch_retry_result(response, lsp, project)
   end
 
+  defp show_message_supported? do
+    case Expert.Configuration.client_support(:show_message) do
+      value when value in [false, nil] -> false
+      _ -> true
+    end
+  end
+
   defp handle_deps_fetch_retry_result(
          %Structures.MessageActionItem{title: "Retry"},
          lsp,
@@ -506,6 +532,9 @@ defmodule Expert do
 
       %Requests.TextDocumentCodeAction{} ->
         {:ok, Handlers.CodeAction}
+
+      %Requests.CodeActionResolve{} ->
+        {:ok, Handlers.CodeActionResolve}
 
       %Requests.TextDocumentCodeLens{} ->
         {:ok, Handlers.CodeLens}

@@ -1,6 +1,7 @@
 defmodule Expert.Provider.Handlers.CodeAction do
   @behaviour Expert.Provider.Handler
 
+  alias Expert.Configuration
   alias Expert.Document.Context
   alias Expert.EngineApi
   alias Forge.CodeAction
@@ -14,6 +15,7 @@ defmodule Expert.Provider.Handlers.CodeAction do
       ) do
     %Context{document: document, project: project} = context
     diagnostics = Enum.map(params.context.diagnostics, &to_code_action_diagnostic/1)
+    defer_edits? = Configuration.client_resolves_code_action_edits?()
 
     code_actions =
       EngineApi.code_actions(
@@ -22,7 +24,8 @@ defmodule Expert.Provider.Handlers.CodeAction do
         params.range,
         diagnostics,
         params.context.only || :all,
-        params.context.trigger_kind
+        params.context.trigger_kind,
+        defer_edits?: defer_edits?
       )
 
     results = Enum.map(code_actions, &to_result/1)
@@ -35,6 +38,16 @@ defmodule Expert.Provider.Handlers.CodeAction do
       range: diagnostic.range,
       message: diagnostic.message,
       source: diagnostic.source
+    }
+  end
+
+  # Deferred action: the edit is computed on codeAction/resolve, identified by the data payload
+  # the client round-trips back to us.
+  defp to_result(%CodeAction{changes: nil, data: data} = action) when not is_nil(data) do
+    %Structures.CodeAction{
+      title: action.title,
+      kind: action.kind,
+      data: data
     }
   end
 

@@ -24,17 +24,27 @@ defmodule Expert.MixProject do
 
   def application do
     [
-      extra_applications: [
-        :logger,
-        :runtime_tools,
-        :kernel,
-        :wx,
-        :observer,
-        :telemetry,
-        :hex_core
-      ],
+      extra_applications: extra_applications() ++ debug_applications(Mix.env()),
       mod: {Expert.Application, []}
     ]
+  end
+
+  def extra_applications do
+    [
+      :logger,
+      :runtime_tools,
+      :kernel,
+      :telemetry,
+      :hex_core
+    ]
+  end
+
+  def debug_applications(:prod) do
+    []
+  end
+
+  def debug_applications(_) do
+    [:wx, :observer]
   end
 
   def aliases do
@@ -101,13 +111,14 @@ defmodule Expert.MixProject do
   defp deps do
     [
       {:burrito, "~> 1.5"},
-      {:deps_nix, "~> 2.4", only: :dev},
+      {:deps_nix, "~> 3.0", only: :dev},
       Mix.Credo.dependency(),
       Mix.Dialyzer.dependency(),
       # In practice Expert does not hardly depend on Engine, only on its compiled
       # artifacts, but we need it as a test dependency to set up tests that
       # assume a roundtrip to a project node is made.
       {:engine, path: "../engine", only: [:test]},
+      {:exqlite, "~> 0.36.0"},
       {:forge, path: "../forge"},
       {:gen_lsp, "~> 0.11.3"},
       {:hex_core, "~> 0.10"},

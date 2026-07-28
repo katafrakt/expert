@@ -20,7 +20,7 @@ defmodule Engine.CodeAction.Handlers.AddAlias do
   alias Sourceror.Zipper
 
   @impl CodeAction.Handler
-  def actions(%Document{} = doc, %Range{} = range, _diagnostics) do
+  def actions(%Document{} = doc, %Range{} = range, _diagnostics, _opts \\ []) do
     with {:ok, _doc, %Analysis{valid?: true} = analysis} <-
            Document.Store.fetch(doc.uri, :analysis),
          {:ok, resolved, _} <- Entity.resolve(analysis, range.start),

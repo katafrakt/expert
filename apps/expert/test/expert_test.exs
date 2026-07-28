@@ -259,6 +259,32 @@ defmodule Expert.ExpertTest do
              Forge.Workspace.get_workspace()
   end
 
+  test "foldingRange request is served before the engine is initialized" do
+    project = Fixtures.project()
+    lsp = initialize_lsp(project)
+
+    # Project is known but not yet ready
+    Expert.Project.Store.add_projects([project])
+
+    uri = Fixtures.file_uri(project, "lib/foo.ex")
+    document = Document.new(uri, "defmodule Foo do\n  :ok\nend\n", 1)
+
+    patch(Expert.Document.Lookup, :resolve_from_request, fn _request, _projects ->
+      {:ok, Context.new(uri, document, project)}
+    end)
+
+    request = %GenLSP.Requests.TextDocumentFoldingRange{
+      id: 1,
+      jsonrpc: "2.0",
+      method: "textDocument/foldingRange",
+      params: %GenLSP.Structures.FoldingRangeParams{
+        text_document: %GenLSP.Structures.TextDocumentIdentifier{uri: uri}
+      }
+    }
+
+    assert {:reply, [_ | _], ^lsp} = Expert.handle_request(request, lsp)
+  end
+
   test "document requests return an error when the document cannot be loaded" do
     project = Fixtures.project()
     lsp = initialize_lsp(project)
@@ -292,6 +318,38 @@ defmodule Expert.ExpertTest do
            } = Expert.handle_request(request, lsp)
 
     assert code == GenLSP.Enumerations.ErrorCodes.invalid_request()
+  end
+
+  test "codeAction/resolve for a foreign action is echoed back, not routed as a document request" do
+    project = Fixtures.project()
+    lsp = initialize_lsp(project)
+
+    Expert.Project.Store.add_projects([project])
+    Expert.Project.Store.transition(project, :ready)
+
+    # A code action from some other provider, carrying a uri for a document that
+    # is not open. It must not be treated as a document request (which would fail
+    # with "Document could not be loaded"); the resolve handler echoes it back.
+    uri =
+      project
+      |> Forge.Project.root_path()
+      |> Path.join("lib/not_open.ex")
+      |> Forge.Document.Path.to_uri()
+
+    action = %GenLSP.Structures.CodeAction{
+      title: "Some other action",
+      data: %{"provider" => "something-else", "uri" => uri}
+    }
+
+    request = %GenLSP.Requests.CodeActionResolve{
+      id: 1,
+      jsonrpc: "2.0",
+      method: "codeAction/resolve",
+      params: action
+    }
+
+    assert {:reply, %GenLSP.Structures.CodeAction{title: "Some other action"}, ^lsp} =
+             Expert.handle_request(request, lsp)
   end
 
   test "document request conversion uses the resolved context document as fallback" do
@@ -354,7 +412,8 @@ defmodule Expert.ExpertTest do
       %Document.Range{} = native_range,
       [%CodeAction.Diagnostic{range: %Document.Range{}}] = diagnostics,
       :all,
-      1 ->
+      1,
+      _opts ->
         send(test_pid, {:code_actions, native_range, diagnostics})
         []
     end)

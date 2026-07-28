@@ -13,7 +13,9 @@ Expert supports the following configuration options.
   "fileLogLevel": "info",
   "elixirSourcePath": "/path/to/elixir/source",
   "elixirExecutablePath": "/absolute/path/to/elixir",
-  "erlangExecutablePath": "/absolute/path/to/erl"
+  "erlangExecutablePath": "/absolute/path/to/erl",
+  "autoFetchDependencies": true,
+  "compileOnType": true
 }
 ```
 
@@ -27,3 +29,5 @@ Expert supports the following configuration options.
 | `elixirSourcePath` | string | `null` | Path to a local Elixir source directory. When set, go-to-definition on Elixir standard library modules will navigate to source files in this directory instead of returning no result. Should be an absolute path. |
 | `elixirExecutablePath` | string | `null` | Path to the Elixir executable Expert should use for building and running project engines. Sending `null` clears the override. Expert uses the path as provided and does not validate it. |
 | `erlangExecutablePath` | string | `null` | Path to the Erlang `erl` executable Expert should use when resolving the project Erlang runtime. Sending `null` clears the override. Expert uses the path as provided and does not validate it. |
+| `autoFetchDependencies` | boolean | `true` | Automatically run `mix deps.get` when project engine startup fails because dependencies are missing or stale. |
+| `compileOnType` | boolean | `true` | Compile eligible open documents after each change to provide file-level diagnostics. Disable this to avoid transient compiler diagnostics while typing.

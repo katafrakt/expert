@@ -59,15 +59,26 @@ defmodule Expert.EngineApi do
         %Range{} = range,
         diagnostics,
         kinds,
-        trigger_kind
+        trigger_kind,
+        opts \\ []
       ) do
     call(project, Engine, :code_actions, [
       document,
       range,
       diagnostics,
       kinds,
-      trigger_kind
+      trigger_kind,
+      opts
     ])
+  end
+
+  def resolve_code_action(
+        %Project{} = project,
+        %Document{} = document,
+        %Range{} = range,
+        module_name
+      ) do
+    call(project, Engine, :resolve_code_action, [document, range, module_name])
   end
 
   def complete(%Project{} = project, %Env{} = env) do
@@ -171,6 +182,10 @@ defmodule Expert.EngineApi do
       new_name,
       client_name
     ])
+  end
+
+  def runtime_versions(%Project{} = project) do
+    call(project, Engine, :runtime_versions, [])
   end
 
   defdelegate stop(project), to: EngineNode

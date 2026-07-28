@@ -9,7 +9,7 @@ defmodule Engine.CodeAction.Handlers.Require do
   alias GenLSP.Enumerations.CodeActionKind
 
   @impl CodeAction.Handler
-  def actions(document, range, diagnostics) do
+  def actions(document, range, diagnostics, _opts \\ []) do
     with {:ok, _doc, %Analysis{valid?: true} = analysis} <-
            Document.Store.fetch(document.uri, :analysis),
          diagnostic when not is_nil(diagnostic) <-

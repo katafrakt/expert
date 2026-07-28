@@ -11,6 +11,9 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
   alias Expert.EngineApi
   alias Expert.EngineNode
   alias Expert.EngineSupervisor
+  alias Expert.Project.Indexer
+  alias Expert.Search.Store
+  alias Expert.Search.Store.Backends.Sqlite
   alias Forge.Document
 
   @project_compile_timeout :timer.seconds(15)
@@ -55,12 +58,23 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
     start_supervised!({Document.Store, derive: [analysis: &Forge.Ast.analyze/1]})
     {:ok, _} = start_supervised({EngineSupervisor, project})
     {:ok, _, _} = EngineNode.start(project)
+    start_supervised!({Sqlite, project})
+
+    start_supervised!({Store, [project, Sqlite]})
+    start_supervised!({Task.Supervisor, name: Indexer.task_supervisor_name(project)})
+    start_supervised!({Indexer, project})
 
     EngineApi.register_listener(project, self(), [:all])
     EngineApi.schedule_compile(project, true)
 
+    elixir_src = EngineApi.call(project, Engine.CodeIntelligence.ElixirSource, :detect, [])
+    assert is_binary(elixir_src)
+
+    :ok =
+      EngineApi.call(project, Application, :put_env, [:language_server, :elixir_src, elixir_src])
+
     assert_receive project_compiled(), @project_compile_timeout
-    assert_receive project_index_ready(), @project_index_timeout
+    assert_receive project_index_ready(project: ^project), @project_index_timeout
 
     %{project: project}
   end
@@ -237,7 +251,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
         defmodule UsesRemoteFunction do
           use MyDefinition
 
-          def uses_hello_defined_in_using_quote do
+          def uses_hello_defined_in_using_quote() do
             hello_func_in_usin|g()
           end
         end
@@ -246,7 +260,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert {:ok, ^referenced_uri, definition_line} =
                definition(project, subject_module, referenced_uri)
 
-      assert definition_line == ~S[      def «hello_func_in_using» do]
+      assert definition_line == ~S[      def «hello_func_in_using»() do]
     end
 
     test "find the correct definition when func defined in the quote block and called form another module",
@@ -260,7 +274,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
         end
 
         defmodule CallsUsesRemoteFunction do
-          def uses_hello_defined_in_using_quote do
+          def uses_hello_defined_in_using_quote() do
             UsesRemoteFunction.hello_func_in_usin|g()
           end
         end
@@ -269,7 +283,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert {:ok, ^referenced_uri, definition_line} =
                definition(project, subject_module, referenced_uri)
 
-      assert definition_line == ~S[      def «hello_func_in_using» do]
+      assert definition_line == ~S[      def «hello_func_in_using»() do]
     end
   end
 
@@ -441,12 +455,6 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert referenced_uri =~ "navigations/lib/my_module.ex"
     end
 
-    @doc """
-    This is a limitation of the ElixirSense.
-    like the `subject_module` below, it can't find the correct definition of `String.to_integer/1`,
-    currently, it will always return `{:ok, nil}`
-    """
-    @tag :skip
     test "find the definition when calling a Elixir std module function",
          %{project: project, subject_uri: subject_uri} do
       subject_module = ~q[
@@ -651,12 +659,12 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
 
   defp index(project, referenced_uris) when is_list(referenced_uris) do
     entries = Enum.flat_map(referenced_uris, &do_index/1)
-    EngineApi.call(project, Search.Store, :replace, [entries])
+    Store.replace(project, entries)
   end
 
   defp index(project, referenced_uri) do
     entries = do_index(referenced_uri)
-    EngineApi.call(project, Search.Store, :replace, [entries])
+    Store.replace(project, entries)
   end
 
   defp do_index(referenced_uri) do

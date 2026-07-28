@@ -14,7 +14,7 @@ defmodule Engine.CodeAction.Handlers.CreateUndefinedFunction do
   alias GenLSP.Enumerations.CodeActionKind
 
   @impl CodeAction.Handler
-  def actions(%Document{} = doc, %Range{}, diagnostics) do
+  def actions(%Document{} = doc, %Range{}, diagnostics, _opts \\ []) do
     Enum.flat_map(diagnostics, fn %Diagnostic{} = diagnostic ->
       with {:ok, function_name, arity} <- extract_function_info(diagnostic),
            {:ok, _doc, %Analysis{valid?: true} = analysis} <-
@@ -30,9 +30,7 @@ defmodule Engine.CodeAction.Handlers.CreateUndefinedFunction do
   end
 
   @impl CodeAction.Handler
-  def kinds do
-    [CodeActionKind.quick_fix()]
-  end
+  def kinds, do: [CodeActionKind.quick_fix()]
 
   @impl CodeAction.Handler
   def trigger_kind, do: :all

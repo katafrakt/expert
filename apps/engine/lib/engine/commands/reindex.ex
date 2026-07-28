@@ -7,12 +7,14 @@ defmodule Engine.Commands.Reindex do
 
   import Forge.EngineApi.Messages
 
-  alias Engine.Search
+  alias Engine.ManagerApi
+  alias Engine.Progress
+  alias Engine.Search.Indexer
   alias Forge.Document
   alias Forge.Project
 
   defmodule State do
-    alias Engine.Search
+    alias Engine.ManagerApi
     alias Engine.Search.Indexer
     alias Forge.Ast.Analysis
     alias Forge.Document
@@ -62,7 +64,7 @@ defmodule Engine.Commands.Reindex do
     def flush_pending_uris(%__MODULE__{index_task: nil} = state) do
       for uri <- state.pending_uris,
           {:ok, path, entries} <- [entries_for_uri(uri)] do
-        Search.Store.update(path, entries)
+        update_search_store(path, entries)
       end
 
       %{state | pending_uris: MapSet.new(), debounce_timer: nil}
@@ -87,7 +89,7 @@ defmodule Engine.Commands.Reindex do
 
     def flush_pending_updates(%__MODULE__{} = state) do
       Enum.each(state.pending_updates, fn {path, entries} ->
-        Search.Store.update(path, entries)
+        update_search_store(path, entries)
       end)
 
       %__MODULE__{state | pending_updates: %{}}
@@ -103,6 +105,11 @@ defmodule Engine.Commands.Reindex do
           Logger.error("Could not update index because #{inspect(error)}")
           error
       end
+    end
+
+    defp update_search_store(path, entries) do
+      project = Engine.get_project()
+      ManagerApi.search_store_update(project, path, entries)
     end
   end
 
@@ -197,7 +204,9 @@ defmodule Engine.Commands.Reindex do
 
     {elapsed_us, result} =
       :timer.tc(fn ->
-        Search.Store.rebuild_index(project)
+        with {:ok, entries, manifest} <- Indexer.create_index(project) do
+          persist_index(project, entries, manifest)
+        end
       end)
 
     Engine.broadcast(
@@ -218,5 +227,20 @@ defmodule Engine.Commands.Reindex do
 
   defp schedule_gc do
     Process.send_after(self(), :gc, :timer.seconds(5))
+  end
+
+  defp persist_index(%Project{} = project, entries, manifest) do
+    Progress.with_progress("Persisting index", fn _token ->
+      result =
+        with :ok <- replace_search_store(project, entries) do
+          Indexer.commit_manifest(project, manifest)
+        end
+
+      {:done, result}
+    end)
+  end
+
+  defp replace_search_store(%Project{} = project, entries) do
+    ManagerApi.search_store_replace(project, entries)
   end
 end

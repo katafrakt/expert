@@ -134,6 +134,45 @@ defmodule Engine.CompletionTest do
       assert doc == "Module.Sub"
     end
 
+    # `%Foo.bar` is a remote call carrying a stray `%`, not a struct reference,
+    # so it isn't detected as one and the operator is left untouched (rather
+    # than crashing while computing the completion length).
+    for invalid <- ["%IO.inspe", "%Some.Random.cra", "%IO.inspe."] do
+      test "leaves a remote call prefixed with % untouched: #{invalid}" do
+        env = new_env(unquote(invalid))
+        {doc, _position} = private(Completion.strip_struct_operator(env))
+
+        assert doc == Document.to_string(env.document)
+      end
+    end
+
+    test "with a reference to a submodule of __MODULE__" do
+      {doc, _position} =
+        "%__MODULE__.Sub"
+        |> new_env()
+        |> private(Completion.strip_struct_operator())
+
+      assert doc == "__MODULE__.Sub"
+    end
+
+    test "with a reference to __MODULE__ followed by a dot" do
+      {doc, _position} =
+        "%__MODULE__."
+        |> new_env()
+        |> private(Completion.strip_struct_operator())
+
+      assert doc == "__MODULE__."
+    end
+
+    test "with a module attribute reference" do
+      {doc, _position} =
+        "%@my_struct"
+        |> new_env()
+        |> private(Completion.strip_struct_operator())
+
+      assert doc == "@my_struct"
+    end
+
     test "with a reference followed by an alias" do
       code = ~q[
         alias Something.Else

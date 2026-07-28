@@ -3,10 +3,12 @@ defmodule Expert.Project.Supervisor do
 
   alias Expert.EngineSupervisor
   alias Expert.Project.Diagnostics
+  alias Expert.Project.Indexer
   alias Expert.Project.Intelligence
   alias Expert.Project.Node
   alias Expert.Project.SearchListener
   alias Expert.Project.Store
+  alias Expert.Search
   alias Forge.Project
 
   require Logger
@@ -19,12 +21,16 @@ defmodule Expert.Project.Supervisor do
     children = [
       {EngineSupervisor, project},
       {Node, project},
+      {Search.Store.backend(), project},
+      {Search.Store, [project]},
       {Diagnostics, project},
       {Intelligence, project},
-      {SearchListener, project}
+      {SearchListener, project},
+      {Task.Supervisor, name: Indexer.task_supervisor_name(project)},
+      {Indexer, [project, initial_compile?: true]}
     ]
 
-    Supervisor.init(children, strategy: :one_for_one)
+    Supervisor.init(children, strategy: :rest_for_one)
   end
 
   def start(%Project{} = project) do

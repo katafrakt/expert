@@ -11,7 +11,7 @@ defmodule Engine.CodeAction.Handlers.ReplaceWithUnderscore do
   alias Sourceror.Zipper
 
   @impl CodeAction.Handler
-  def actions(%Document{} = doc, %Range{}, diagnostics) do
+  def actions(%Document{} = doc, %Range{}, diagnostics, _opts \\ []) do
     Enum.reduce(diagnostics, [], fn %Diagnostic{} = diagnostic, acc ->
       with {:ok, variable_name, line_number} <- extract_variable_and_line(diagnostic),
            {:ok, changes} <- to_changes(doc, line_number, variable_name) do

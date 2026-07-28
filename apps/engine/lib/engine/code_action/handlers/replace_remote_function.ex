@@ -13,7 +13,7 @@ defmodule Engine.CodeAction.Handlers.ReplaceRemoteFunction do
   alias Sourceror.Zipper
 
   @impl CodeAction.Handler
-  def actions(%Document{} = doc, %Range{}, diagnostics) do
+  def actions(%Document{} = doc, %Range{}, diagnostics, _opts \\ []) do
     Enum.flat_map(diagnostics, fn %Diagnostic{} = diagnostic ->
       with {:ok, module, function, arity, line_number} <- extract_function_and_line(diagnostic),
            {:ok, suggestions} <- prepare_suggestions(module, function, arity) do

@@ -5,6 +5,8 @@ defmodule Forge.Ast.Detection.StructReferenceTest do
     skip: [[:struct_fields, :*], [:struct_field_value, :*], [:struct_field_key, :*]],
     variations: [:match, :function_arguments]
 
+  doctest Forge.Ast.Detection.StructReference
+
   test "is detected if a module reference starts in function arguments" do
     assert_detected ~q[def my_function(%_«»)]
   end
@@ -39,5 +41,37 @@ defmodule Forge.Ast.Detection.StructReferenceTest do
 
   test "is not detected if a module reference lacks a %" do
     refute_detected ~q[def my_function(__)]
+  end
+
+  test "is detected while typing a submodule after a trailing dot" do
+    assert_detected ~q[%F«oo.»]
+  end
+
+  test "is detected while typing a submodule after a nested trailing dot" do
+    assert_detected ~q[%F«oo.Bar.»]
+  end
+
+  test "is detected for a variable module reference" do
+    assert_detected ~q[%f«oo»]
+  end
+
+  test "is not detected past a lowercase call segment, only through the trailing dot" do
+    assert_detected ~q[%F«oo.»bar]
+  end
+
+  test "is detected for a submodule of __MODULE__" do
+    assert_detected ~q[%_«_MODULE__.Sub»]
+  end
+
+  test "is detected while typing a submodule after __MODULE__ and a trailing dot" do
+    assert_detected ~q[%_«_MODULE__.»]
+  end
+
+  test "is not detected for a call on __MODULE__, only through the trailing dot" do
+    assert_detected ~q[%_«_MODULE__.»foo]
+  end
+
+  test "is detected for a module attribute struct" do
+    assert_detected ~q[%@t«»]
   end
 end

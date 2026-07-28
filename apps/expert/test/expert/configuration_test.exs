@@ -1,6 +1,8 @@
 defmodule Expert.ConfigurationTest do
   use ExUnit.Case, async: false
 
+  import Expert.Test.ConfigurationSupport
+
   alias Expert.Configuration
   alias Expert.Configuration.WorkspaceSymbols
   alias GenLSP.Notifications.WorkspaceDidChangeConfiguration
@@ -231,6 +233,30 @@ defmodule Expert.ConfigurationTest do
     end
   end
 
+  describe "client_resolves_code_action_edits?/0" do
+    test "true when the client can resolve the edit property" do
+      put_resolve_support(%{properties: ["edit"]})
+
+      assert Configuration.client_resolves_code_action_edits?()
+    end
+
+    test "false when the client resolves other properties only" do
+      put_resolve_support(%{properties: ["command"]})
+
+      refute Configuration.client_resolves_code_action_edits?()
+    end
+
+    test "false when the client declares no resolve support" do
+      put_resolve_support(nil)
+
+      refute Configuration.client_resolves_code_action_edits?()
+    end
+
+    test "false with default configuration" do
+      refute Configuration.client_resolves_code_action_edits?()
+    end
+  end
+
   describe "on_change/1 with workspace_symbols.min_query_length" do
     test "parses nested setting correctly" do
       settings = %{"workspaceSymbols" => %{"minQueryLength" => 0}}
@@ -397,6 +423,67 @@ defmodule Expert.ConfigurationTest do
 
       assert updated.elixir_executable_path == nil
       assert updated.erlang_executable_path == nil
+    end
+  end
+
+  describe "on_change/1 with autoFetchDependencies" do
+    test "parses boolean values" do
+      {:ok, updated} = Configuration.on_change(build_change(%{"autoFetchDependencies" => true}))
+
+      assert updated.auto_fetch_dependencies
+      assert Configuration.auto_fetch_dependencies?()
+
+      {:ok, updated} = Configuration.on_change(build_change(%{"autoFetchDependencies" => false}))
+
+      refute updated.auto_fetch_dependencies
+    end
+
+    test "preserves previous value when setting is missing" do
+      {:ok, _updated} = Configuration.on_change(build_change(%{"autoFetchDependencies" => true}))
+      {:ok, updated} = Configuration.on_change(build_change(%{}))
+
+      assert updated.auto_fetch_dependencies
+    end
+
+    test "defaults to true for invalid values and explicit null" do
+      for value <- [nil, "true", 1] do
+        {:ok, updated} =
+          Configuration.on_change(build_change(%{"autoFetchDependencies" => value}))
+
+        assert updated.auto_fetch_dependencies
+      end
+    end
+  end
+
+  describe "on_change/1 with compileOnType" do
+    test "defaults to enabled" do
+      assert Configuration.compile_on_type?()
+    end
+
+    test "parses boolean values" do
+      {:ok, updated} = Configuration.on_change(build_change(%{"compileOnType" => false}))
+
+      refute updated.compile_on_type
+      refute Configuration.compile_on_type?()
+
+      {:ok, updated} = Configuration.on_change(build_change(%{"compileOnType" => true}))
+
+      assert updated.compile_on_type
+    end
+
+    test "preserves the previous value when the setting is missing" do
+      {:ok, _updated} = Configuration.on_change(build_change(%{"compileOnType" => false}))
+      {:ok, updated} = Configuration.on_change(build_change(%{}))
+
+      refute updated.compile_on_type
+    end
+
+    test "defaults to enabled for invalid values and explicit null" do
+      for value <- [nil, "true", 1] do
+        {:ok, updated} = Configuration.on_change(build_change(%{"compileOnType" => value}))
+
+        assert updated.compile_on_type
+      end
     end
   end
 

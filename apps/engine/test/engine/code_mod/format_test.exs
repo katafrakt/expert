@@ -18,7 +18,9 @@ defmodule Engine.CodeMod.FormatTest do
 
     @impl Mix.Tasks.Format
     def format(contents, _opts) do
-      :format_project = Mix.Project.config() |> Keyword.fetch!(:app)
+      if pid = :persistent_term.get({__MODULE__, :test_pid}, nil) do
+        send(pid, :plugin_called)
+      end
 
       formatted = Code.format_string!(contents)
       IO.iodata_to_binary([formatted, ?\n])
@@ -109,6 +111,7 @@ defmodule Engine.CodeMod.FormatTest do
   setup do
     project = project()
     Engine.set_project(project)
+    start_supervised!({Format.Cache, project: project})
     {:ok, project: project}
   end
 
@@ -122,22 +125,52 @@ defmodule Engine.CodeMod.FormatTest do
     end
 
     @tag :tmp_dir
-    test "formatter plugins run with the formatted project's Mix config", %{tmp_dir: tmp_dir} do
+    test "formatter plugins are called during formatting", %{tmp_dir: tmp_dir} do
       project = write_formatter_plugin_project!(tmp_dir)
       Engine.set_project(project)
 
-      assert {:ok, result} =
+      :persistent_term.put({ProjectConfigFormatter, :test_pid}, self())
+      on_exit(fn -> :persistent_term.erase({ProjectConfigFormatter, :test_pid}) end)
+
+      assert {:ok, _result} =
                Mix.ProjectStack.on_clean_slate(fn ->
                  modify(unformatted(), project: project)
                end)
 
-      assert result == formatted()
+      assert_received :plugin_called
     end
 
     test "it will fail to format a file not in the project", %{project: project} do
-      assert {:error, reason} = modify(unformatted(), file_path: "/tmp/foo.ex", project: project)
-      assert reason =~ "Cannot format file /tmp/foo.ex"
+      file_path = "/tmp/foo.ex"
+      expected_path = file_path |> Document.Path.to_uri() |> Document.Path.from_uri()
+
+      assert {:error, reason} = modify(unformatted(), file_path: file_path, project: project)
+      assert reason =~ "Cannot format file #{expected_path}"
       assert reason =~ "It is not in the project at"
+    end
+
+    @tag :tmp_dir
+    test "it formats a file path inside the project root", %{tmp_dir: tmp_dir} do
+      project_path = Path.join(tmp_dir, "elixir")
+      file_path = Path.join(project_path, "lsp_elixir_test.exs")
+      project = %Project{root_uri: Document.Path.to_uri(project_path), kind: :bare}
+
+      File.mkdir_p!(project_path)
+      Engine.set_project(project)
+
+      patch(Mix.Tasks.Future.Format, :formatter_for_file, fn _file_path, _opts ->
+        formatter = fn source ->
+          source
+          |> Code.format_string!()
+          |> IO.iodata_to_binary()
+          |> Kernel.<>("\n")
+        end
+
+        {formatter, []}
+      end)
+
+      assert {:ok, result} = modify(unformatted(), file_path: file_path, project: project)
+      assert result == formatted()
     end
 
     test "it should provide an error for a syntax error", %{project: project} do

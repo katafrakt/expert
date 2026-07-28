@@ -45,7 +45,7 @@ defmodule Engine.MixProject do
 
   defp deps do
     [
-      {:deps_nix, "~> 2.4", only: :dev},
+      {:deps_nix, "~> 3.0", only: :dev},
       Mix.Credo.dependency(),
       Mix.Dialyzer.dependency(),
       {:elixir_sense,
@@ -61,8 +61,7 @@ defmodule Engine.MixProject do
       {:stream_data, "~> 1.1", only: [:test], runtime: false},
       # Offline engine builds cannot depend on a local Rebar archive, so we
       # force it to Mix
-      {:telemetry, "~> 1.3", manager: :mix, optional: false, override: true},
-      {:refactorex, "~> 0.1.52"}
+      {:telemetry, "~> 1.3", manager: :mix, optional: false, override: true}
     ]
   end
 

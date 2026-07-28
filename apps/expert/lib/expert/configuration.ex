@@ -53,6 +53,16 @@ defmodule Expert.Configuration do
       parser: {:string, nil},
       missing: :preserve
     },
+    auto_fetch_dependencies: %{
+      key: "autoFetchDependencies",
+      parser: {:boolean, true},
+      missing: :preserve
+    },
+    compile_on_type: %{
+      key: "compileOnType",
+      parser: {:boolean, true},
+      missing: :preserve
+    },
     workspace_symbols: %{
       key: "workspaceSymbols",
       parser: :workspace_symbols,
@@ -71,7 +81,9 @@ defmodule Expert.Configuration do
             file_log_level: @default_file_log_level,
             elixir_source_path: nil,
             elixir_executable_path: nil,
-            erlang_executable_path: nil
+            erlang_executable_path: nil,
+            auto_fetch_dependencies: true,
+            compile_on_type: true
 
   @type t :: %__MODULE__{
           support: support | nil,
@@ -82,7 +94,9 @@ defmodule Expert.Configuration do
           file_log_level: file_level(),
           elixir_source_path: String.t() | nil,
           elixir_executable_path: String.t() | nil,
-          erlang_executable_path: String.t() | nil
+          erlang_executable_path: String.t() | nil,
+          auto_fetch_dependencies: boolean(),
+          compile_on_type: boolean()
         }
 
   @opaque support :: Support.t()
@@ -115,6 +129,20 @@ defmodule Expert.Configuration do
     client_support(get().support, key)
   end
 
+  @doc """
+  Whether the client can lazily resolve a code action's `edit` property via `codeAction/resolve`.
+  When true, the server defers computing refactor edits until an action is actually invoked.
+
+  https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#clientCodeActionResolveOptions
+  """
+  @spec client_resolves_code_action_edits?() :: boolean()
+  def client_resolves_code_action_edits? do
+    case client_support(:code_action_resolve) do
+      %{properties: properties} when is_list(properties) -> "edit" in properties
+      _ -> false
+    end
+  end
+
   @spec log_level() :: lsp_level()
   def log_level do
     get().log_level
@@ -123,6 +151,16 @@ defmodule Expert.Configuration do
   @spec file_log_level() :: file_level()
   def file_log_level do
     get().file_log_level
+  end
+
+  @spec auto_fetch_dependencies?() :: boolean()
+  def auto_fetch_dependencies? do
+    get().auto_fetch_dependencies
+  end
+
+  @spec compile_on_type?() :: boolean()
+  def compile_on_type? do
+    get().compile_on_type
   end
 
   @vscode_family_patterns [
@@ -245,12 +283,21 @@ defmodule Expert.Configuration do
     default
   end
 
+  defp parse_setting(value, {:boolean, _default}) when is_boolean(value) do
+    value
+  end
+
+  defp parse_setting(_value, {:boolean, default}) do
+    default
+  end
+
   defp parse_setting(settings, :workspace_symbols) do
     WorkspaceSymbols.new(%{"workspaceSymbols" => settings})
   end
 
   defp default_setting({:enum, _values, default}), do: default
   defp default_setting({:string, default}), do: default
+  defp default_setting({:boolean, default}), do: default
 
   defp put_setting(%__MODULE__{} = config, field, value) do
     struct!(config, [{field, value}])

@@ -31,6 +31,7 @@ defmodule Engine.CodeAction.Handlers.RefactorexTest do
   setup do
     project = project()
     Engine.set_project(project)
+    start_supervised!({Format.Cache, project: project})
 
     {:ok, project: project}
   end
@@ -89,8 +90,8 @@ defmodule Engine.CodeAction.Handlers.RefactorexTest do
   end
 
   test "Refactorex respects formatter line length" do
-    patch(Format, :formatter_for_file, fn _project, _path ->
-      {nil, [line_length: 120, locals_without_parens: []]}
+    patch(Format.Cache, :fetch_formatter, fn _project, _path ->
+      {:ok, nil, [line_length: 120, locals_without_parens: []]}
     end)
 
     assert_refactored(
@@ -111,8 +112,8 @@ defmodule Engine.CodeAction.Handlers.RefactorexTest do
   end
 
   test "Refactorex formats when formatter line length is missing" do
-    patch(Format, :formatter_for_file, fn _project, _path ->
-      {nil, [locals_without_parens: []]}
+    patch(Format.Cache, :fetch_formatter, fn _project, _path ->
+      {:ok, nil, [locals_without_parens: []]}
     end)
 
     assert_refactored(
@@ -133,6 +134,63 @@ defmodule Engine.CodeAction.Handlers.RefactorexTest do
         end
       end]
     )
+  end
+
+  describe "deferred edits and resolve" do
+    test "defers edits when requested and resolves them to the eager result" do
+      {range, original} =
+        pop_range(~q[
+          def my_«»func(unused) do
+          end
+        ])
+
+      document = Document.new("file:///file.ex", original, 7)
+
+      eager_actions = Refactorex.actions(document, range, [])
+      deferred_actions = Refactorex.actions(document, range, [], defer_edits?: true)
+
+      assert not Enum.empty?(deferred_actions)
+      assert length(deferred_actions) == length(eager_actions)
+
+      for action <- deferred_actions do
+        assert action.changes == nil
+
+        assert %{
+                 "provider" => "refactor",
+                 "module" => "Elixir." <> _,
+                 "uri" => "file:///file.ex",
+                 "version" => 7,
+                 "range" => %{"start" => %{"line" => _, "character" => _}, "end" => _}
+               } = action.data
+      end
+
+      for eager <- eager_actions do
+        deferred = Enum.find(deferred_actions, &(&1.title == eager.title))
+        assert deferred, "no deferred action for #{eager.title}"
+
+        assert {:ok, changes} = Refactorex.resolve(document, range, deferred.data["module"])
+        assert changes.edits == eager.changes.edits
+      end
+    end
+
+    test "resolve rejects unknown and no-longer-applicable refactorings" do
+      {range, original} =
+        pop_range(~q[
+          def my_«»func(unused) do
+          end
+        ])
+
+      document = Document.new("file:///file.ex", original, 0)
+
+      assert :error = Refactorex.resolve(document, range, "Elixir.NotARefactoring")
+
+      assert :error =
+               Refactorex.resolve(
+                 document,
+                 range,
+                 "Elixir.Forge.Refactor.Pipeline.RemovePipe"
+               )
+    end
   end
 
   describe "line_or_selection field-level comparison" do

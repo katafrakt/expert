@@ -282,5 +282,6 @@ defmodule Expert.Document.Lookup do
   defp extract_uri(%{text_document: %{uri: uri}}) when is_binary(uri), do: uri
   defp extract_uri(%{uri: uri}) when is_binary(uri), do: uri
   defp extract_uri(%{params: params}) when is_map(params), do: extract_uri(params)
+  defp extract_uri(%{data: %{"uri" => uri}}) when is_binary(uri), do: uri
   defp extract_uri(_), do: nil
 end

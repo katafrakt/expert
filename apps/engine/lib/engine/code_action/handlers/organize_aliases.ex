@@ -11,7 +11,7 @@ defmodule Engine.CodeAction.Handlers.OrganizeAliases do
   alias GenLSP.Enumerations.CodeActionKind
 
   @impl CodeAction.Handler
-  def actions(%Document{} = doc, %Range{} = range, _diagnostics) do
+  def actions(%Document{} = doc, %Range{} = range, _diagnostics, _opts \\ []) do
     with {:ok, _doc, analysis} <- Document.Store.fetch(doc.uri, :analysis),
          :ok <- check_aliases(doc, analysis, range) do
       aliases = CodeMod.Aliases.in_scope(analysis, range)

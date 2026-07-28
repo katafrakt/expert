@@ -2,9 +2,10 @@ defmodule Engine.Completion do
   import Forge.Document.Line
   import Forge.Logging
 
-  alias Engine.CodeMod.Format
+  alias Engine.CodeMod.Format.Cache
   alias Engine.Module.Loader
   alias Forge.Ast.Analysis
+  alias Forge.Ast.Detection.StructReference
   alias Forge.Ast.Env
   alias Forge.Completion.Candidate
   alias Forge.Document
@@ -20,12 +21,19 @@ defmodule Engine.Completion do
     if String.trim(hint) == "" do
       []
     else
-      {_formatter, opts} =
+      fetch_result =
         timed_log("formatter for file", fn ->
-          Format.formatter_for_file(env.project, env.document.path)
+          Cache.fetch_formatter(env.project, env.document.path)
         end)
 
-      locals_without_parens = Keyword.fetch!(opts, :locals_without_parens)
+      locals_without_parens =
+        case fetch_result do
+          {:ok, _formatter, opts} ->
+            Keyword.fetch!(opts, :locals_without_parens)
+
+          :error ->
+            []
+        end
 
       for suggestion <-
             timed_log("ES suggestions", fn ->
@@ -134,18 +142,9 @@ defmodule Engine.Completion do
 
   defp fetch_struct_completion_length(env) do
     case Code.Fragment.cursor_context(env.prefix) do
-      {:struct, {:dot, {:alias, struct_name}, []}} ->
-        # add one because of the trailing period
-        {:ok, length(struct_name) + 1}
-
-      {:struct, {:local_or_var, local_name}} ->
-        {:ok, length(local_name)}
-
-      {:struct, struct_name} ->
-        {:ok, length(struct_name)}
-
-      {:local_or_var, local_name} ->
-        {:ok, length(local_name)}
+      {:struct, context} -> StructReference.reference_length(context)
+      {:local_or_var, local_name} -> {:ok, length(local_name)}
+      _ -> :error
     end
   end
 end

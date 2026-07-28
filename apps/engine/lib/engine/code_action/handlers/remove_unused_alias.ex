@@ -47,7 +47,7 @@ defmodule Engine.CodeAction.Handlers.RemoveUnusedAlias do
 
   defrecordp :single_alias_metadata, [:document, :range]
   @impl CodeAction.Handler
-  def actions(%Document{} = document, %Range{} = range, diagnostics) do
+  def actions(%Document{} = document, %Range{} = range, diagnostics, _opts \\ []) do
     Enum.reduce(diagnostics, [], fn %Diagnostic{} = diagnostic, acc ->
       case to_edit(document, range.start, diagnostic) do
         {:ok, module_name, edit} ->
