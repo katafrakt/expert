@@ -9,8 +9,8 @@ defmodule Expert.Project.DiagnosticsTest do
 
   alias Expert.EngineApi
   alias Expert.Test.DispatchFake
+  alias Forge.Diagnostic
   alias Forge.Document
-  alias Forge.Plugin.V1.Diagnostic
   alias GenLSP.Notifications.TextDocumentPublishDiagnostics
   alias GenLSP.Structures
   alias GenLSP.Structures.PublishDiagnosticsParams
@@ -35,7 +35,7 @@ defmodule Expert.Project.DiagnosticsTest do
     ]
 
     values = Keyword.merge(defaults, opts)
-    struct(Diagnostic.Result, values)
+    struct(Diagnostic, values)
   end
 
   defp open_file(project, contents) do
@@ -131,6 +131,64 @@ defmodule Expert.Project.DiagnosticsTest do
                end: %Structures.Position{character: 0, line: 3},
                start: %Structures.Position{character: 0, line: 3}
              }
+    end
+
+    test "it keeps project diagnostics when a file has no diagnostics", %{project: project} do
+      document = open_file(project, "defmodule Dummy")
+
+      EngineApi.broadcast(
+        project,
+        project_diagnostics(
+          build_number: 1,
+          diagnostics: [
+            diagnostic(document.uri, message: "boundary warning", source: "Boundary")
+          ]
+        )
+      )
+
+      assert_receive {:transport, %TextDocumentPublishDiagnostics{}}
+
+      EngineApi.broadcast(project, file_diagnostics(build_number: 2, uri: document.uri))
+
+      assert_receive {:transport,
+                      %TextDocumentPublishDiagnostics{
+                        params: %PublishDiagnosticsParams{
+                          diagnostics: [%Structures.Diagnostic{message: "boundary warning"}]
+                        }
+                      }}
+    end
+
+    test "it clears stale project compiler diagnostics when a file compiles cleanly", %{
+      project: project
+    } do
+      document = open_file(project, "defmodule Dummy")
+
+      EngineApi.broadcast(
+        project,
+        project_diagnostics(
+          build_number: 1,
+          diagnostics: [
+            diagnostic(document.uri,
+              message: "undefined function missing/0",
+              source: "Elixir"
+            )
+          ]
+        )
+      )
+
+      assert_receive {:transport, %TextDocumentPublishDiagnostics{}}
+
+      {:ok, document} =
+        Document.Store.get_and_update(document.uri, fn document ->
+          {:ok, Document.mark_dirty(document)}
+        end)
+
+      EngineApi.broadcast(project, file_diagnostics(build_number: 2, uri: document.uri))
+
+      assert_receive {:transport,
+                      %TextDocumentPublishDiagnostics{
+                        params: %PublishDiagnosticsParams{diagnostics: []}
+                      }}
     end
   end
 end

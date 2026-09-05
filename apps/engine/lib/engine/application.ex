@@ -15,13 +15,12 @@ defmodule Engine.Application do
           Engine.Api.Proxy,
           Engine.Commands.Reindex,
           Engine.Module.Loader,
+          Engine.Compilation.TraceBuffer,
           Engine.Dispatch,
           Engine.ModuleMappings,
           Engine.Build,
           Engine.ModuleStore,
-          Engine.Build.CaptureServer,
-          Engine.Plugin.Runner.Supervisor,
-          Engine.Plugin.Runner.Coordinator
+          Engine.Build.CaptureServer
         ]
       else
         []

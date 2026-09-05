@@ -11,7 +11,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   require Entry
   require Logger
 
-  @schema_version 3
+  @schema_version 4
   @database_file "source.index.sqlite3"
   @slow_query_threshold_ms 500
   # NOTE(doorgan): SQLite has a variable limit of 32766. Entry batches use 7 params
@@ -108,6 +108,11 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   @impl Backend
   def find_by_ids(%Project{} = project, ids, type, subtype) do
     GenServer.call(name(project), {:find_by_ids, ids, type, subtype}, :infinity)
+  end
+
+  @impl Backend
+  def find_by_paths(%Project{} = project, paths, type, subtype) when is_list(paths) do
+    GenServer.call(name(project), {:find_by_paths, paths, type, subtype}, :infinity)
   end
 
   @impl Backend
@@ -227,6 +232,9 @@ defmodule Expert.Search.Store.Backends.Sqlite do
 
   def handle_call({:find_by_ids, ids, type, subtype}, _from, %State{} = state),
     do: reply(do_find_by_ids(state, ids, type, subtype), state)
+
+  def handle_call({:find_by_paths, paths, type, subtype}, _from, %State{} = state),
+    do: reply(do_find_by_paths(state, paths, type, subtype), state)
 
   def handle_call({:structure_for_path, path}, _from, %State{} = state),
     do: reply(do_structure_for_path(state, path), state)
@@ -389,7 +397,14 @@ defmodule Expert.Search.Store.Backends.Sqlite do
                query(
                  state,
                  """
-                 SELECT entries.id, entry_blobs.entry
+                 SELECT
+                   entries.id,
+                   entries.path,
+                   entries.subject,
+                   entries.type,
+                   entries.subtype,
+                   entries.block_id,
+                   entry_blobs.entry
                  FROM entries
                  JOIN entry_blobs ON entry_blobs.entry_key = entries.entry_key
                  #{where_clause(where)}
@@ -400,12 +415,32 @@ defmodule Expert.Search.Store.Backends.Sqlite do
           entries_by_id =
             Enum.group_by(
               rows,
-              fn [id, _entry_blob] -> id end,
-              fn [_id, entry_blob] -> decode_term(entry_blob) end
+              fn [id | _rest] -> id end,
+              &decode_entry/1
             )
 
           Enum.flat_map(ids, fn id -> Map.get(entries_by_id, id, []) end)
         end
+    end
+  end
+
+  def do_find_by_paths(%State{}, [], _type, _subtype), do: []
+
+  def do_find_by_paths(%State{} = state, paths, type, subtype) when is_list(paths) do
+    result =
+      paths
+      |> Enum.uniq()
+      |> Stream.chunk_every(path_chunk_size(type, subtype))
+      |> Enum.reduce_while([], fn paths, batches ->
+        case find_by_path_chunk(state, paths, type, subtype) do
+          entries when is_list(entries) -> {:cont, [entries | batches]}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      {:error, _} = error -> error
+      batches -> batches |> Enum.reverse() |> List.flatten()
     end
   end
 
@@ -421,7 +456,14 @@ defmodule Expert.Search.Store.Backends.Sqlite do
     case query(
            state,
            """
-           SELECT entry_blobs.entry
+           SELECT
+             entries.id,
+             entries.path,
+             entries.subject,
+             entries.type,
+             entries.subtype,
+             entries.block_id,
+             entry_blobs.entry
            FROM entries
             JOIN entry_blobs ON entry_blobs.entry_key = entries.entry_key
            WHERE block_id = ? AND path = ?
@@ -431,7 +473,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
          ) do
       {:ok, rows} ->
         rows
-        |> Enum.map(fn [entry_blob] -> decode_term(entry_blob) end)
+        |> Enum.map(&decode_entry/1)
         |> Enum.filter(&same_block_type?(entry, &1))
         |> Enum.uniq()
         |> then(&{:ok, &1})
@@ -684,7 +726,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
 
     args =
       Enum.flat_map(rows, fn {entry, entry_key} ->
-        [entry_key, blob(entry)]
+        [entry_key, build_entry_blob(entry)]
       end)
 
     exec(state, sql, args)
@@ -781,7 +823,14 @@ defmodule Expert.Search.Store.Backends.Sqlite do
     query(
       state,
       """
-      SELECT entry_blobs.entry
+      SELECT
+        entries.id,
+        entries.path,
+        entries.subject,
+        entries.type,
+        entries.subtype,
+        entries.block_id,
+        entry_blobs.entry
       FROM entries
       JOIN entry_blobs ON entry_blobs.entry_key = entries.entry_key
       #{where}
@@ -790,8 +839,21 @@ defmodule Expert.Search.Store.Backends.Sqlite do
     )
   end
 
+  defp find_by_path_chunk(%State{} = state, paths, type, subtype) do
+    {where, args} =
+      constraints(["entries.path IN (#{placeholders(paths)})"], paths, type, subtype)
+
+    state
+    |> query_entries(where_clause(where), args)
+    |> entries_result()
+  end
+
+  defp path_chunk_size(type, subtype) do
+    @sqlite_variable_limit - Enum.count([type, subtype], &(&1 != :_))
+  end
+
   defp entries_result({:ok, rows}) do
-    Enum.map(rows, fn [entry_blob] -> decode_term(entry_blob) end)
+    Enum.map(rows, &decode_entry/1)
   end
 
   defp entries_result({:error, _} = error), do: error
@@ -1040,6 +1102,38 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   defp block_id_key(:root), do: 0
   defp block_id_key(nil), do: 0
   defp block_id_key(block_id) when is_integer(block_id), do: block_id
+
+  defp block_id(0), do: :root
+  defp block_id(block_id) when is_integer(block_id), do: block_id
+
+  defp build_entry_blob(%Entry{} = entry) do
+    subject_override = if !is_binary(entry.subject), do: entry.subject
+
+    blob({subject_override, entry.application, entry.block_range, entry.range, entry.metadata})
+  end
+
+  defp decode_entry([id, path, subject_key, type_blob, subtype, block_id, entry_blob]) do
+    {subject_override, application, block_range, range, metadata} = decode_term(entry_blob)
+
+    subject =
+      case subject_override do
+        nil -> subject_key
+        subject -> subject
+      end
+
+    %Entry{
+      application: application,
+      id: id,
+      block_id: block_id(block_id),
+      block_range: block_range,
+      path: path,
+      range: range,
+      subject: subject,
+      subtype: String.to_existing_atom(subtype),
+      type: decode_term(type_blob),
+      metadata: metadata
+    }
+  end
 
   defp blob(term), do: {:blob, encode_term(term)}
 

@@ -3,9 +3,8 @@ defmodule Engine.Build.State do
 
   alias Elixir.Features
   alias Engine.Build
-  alias Engine.Plugin
+  alias Forge.Diagnostic
   alias Forge.Document
-  alias Forge.Plugin.V1.Diagnostic
   alias Forge.Project
   alias Forge.VM.Versions
 
@@ -15,6 +14,7 @@ defmodule Engine.Build.State do
             build_number: 0,
             uri_to_document: %{},
             project_compile: :none,
+            initial_compile?: true,
             last_deps_fetch_result: nil
 
   def new(%Project{} = project) do
@@ -33,7 +33,7 @@ defmodule Engine.Build.State do
     # compiled because they might have unsaved changes, and we want that state
     # to be the latest state of the project.
     new_state =
-      Enum.reduce(new_state.uri_to_document, state, fn {_uri, document}, state ->
+      Enum.reduce(new_state.uri_to_document, new_state, fn {_uri, document}, state ->
         compile_file(state, document)
       end)
 
@@ -113,13 +113,13 @@ defmodule Engine.Build.State do
   def last_deps_fetch_result(%__MODULE__{last_deps_fetch_result: result}), do: result
 
   def edit_window_millis do
-    Application.get_env(:engine, :edit_window_millis, 1000)
+    Application.get_env(:engine, :edit_window_millis, 100)
   end
 
   defp normalize_fetch_deps_result({:ok, :ok}), do: :ok
   defp normalize_fetch_deps_result(result), do: result
 
-  defp compile_project(%__MODULE__{} = state, initial?) do
+  defp compile_project(%__MODULE__{} = state, force?) do
     state = increment_build_number(state)
     project = state.project
 
@@ -128,7 +128,11 @@ defmodule Engine.Build.State do
         project_compile_requested(project: project, build_number: state.build_number)
 
       Engine.broadcast(compile_requested_message)
-      {elapsed_us, result} = :timer.tc(fn -> Build.Project.compile(project, initial?) end)
+      Engine.Compilation.TraceBuffer.discard()
+
+      {elapsed_us, result} =
+        :timer.tc(fn -> Build.Project.compile(project, state.initial_compile?, force?) end)
+
       elapsed_ms = to_ms(elapsed_us)
 
       {compile_message, diagnostics} =
@@ -144,17 +148,18 @@ defmodule Engine.Build.State do
             diagnostics =
               diagnostics
               |> List.wrap()
-              |> Enum.filter(&match?(%Diagnostic.Result{}, &1))
+              |> Enum.filter(&match?(%Diagnostic{}, &1))
 
             {message, diagnostics}
 
           {:error, diagnostics} ->
+            Engine.Compilation.TraceBuffer.discard()
             message = project_compiled(status: :error, project: project, elapsed_ms: elapsed_ms)
 
             diagnostics =
               diagnostics
               |> List.wrap()
-              |> Enum.filter(&match?(%Diagnostic.Result{}, &1))
+              |> Enum.filter(&match?(%Diagnostic{}, &1))
 
             {message, diagnostics}
         end
@@ -168,10 +173,9 @@ defmodule Engine.Build.State do
 
       Engine.broadcast(compile_message)
       Engine.broadcast(diagnostics_message)
-      Plugin.diagnose(project, state.build_number)
     end)
 
-    state
+    %__MODULE__{state | initial_compile?: false}
   end
 
   def compile_file(%__MODULE__{} = state, %Document{} = document) do
@@ -222,7 +226,6 @@ defmodule Engine.Build.State do
 
       Engine.broadcast(compile_message)
       Engine.broadcast(diagnostics)
-      Plugin.diagnose(project, state.build_number, document)
     end)
 
     state
@@ -245,7 +248,7 @@ defmodule Engine.Build.State do
     :ok
   end
 
-  def mix_compile_opts(initial?) do
+  def mix_compile_opts(force?) do
     opts = ~w(
         --return-errors
         --ignore-module-conflict
@@ -253,10 +256,11 @@ defmodule Engine.Build.State do
         --docs
         --debug-info
         --no-protocol-consolidation
+        --no-prune-code-paths
     )
 
-    if initial? do
-      ["--force " | opts]
+    if force? do
+      ["--force" | opts]
     else
       opts
     end
@@ -267,7 +271,7 @@ defmodule Engine.Build.State do
   end
 
   defp parser_options do
-    [columns: true, token_metadata: true]
+    [columns: true]
   end
 
   defp increment_build_number(%__MODULE__{} = state) do

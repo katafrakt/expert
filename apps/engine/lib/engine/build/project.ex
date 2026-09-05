@@ -2,7 +2,6 @@ defmodule Engine.Build.Project do
   alias Engine.Build
   alias Engine.Build.Isolation
   alias Engine.Module.Loader
-  alias Engine.Plugin
   alias Engine.Progress
   alias Forge.Internet
   alias Forge.Project
@@ -10,7 +9,7 @@ defmodule Engine.Build.Project do
 
   require Logger
 
-  def compile(%Project{kind: :mix} = project, initial?) do
+  def compile(%Project{kind: :mix} = project, initial?, force?) do
     Engine.Mix.in_project(fn _ ->
       Logger.info("Building #{Project.display_name(project)}")
 
@@ -18,7 +17,7 @@ defmodule Engine.Build.Project do
         Build.set_progress_token(token)
 
         try do
-          {:done, do_compile(project, initial?, token)}
+          {:done, do_compile(project, initial?, force?, token)}
         after
           Build.clear_progress_token()
         end
@@ -26,7 +25,7 @@ defmodule Engine.Build.Project do
     end)
   end
 
-  def compile(%Project{}, _initial?) do
+  def compile(%Project{}, _initial?, _force?) do
     :ok
   end
 
@@ -41,6 +40,7 @@ defmodule Engine.Build.Project do
 
           try do
             prepare_for_project_build(token)
+            Engine.Mix.record_deps(project)
             {:done, :ok}
           after
             Build.clear_progress_token()
@@ -54,15 +54,19 @@ defmodule Engine.Build.Project do
     :ok
   end
 
-  defp do_compile(project, initial?, token) do
+  defp do_compile(project, initial?, force?, token) do
     Mix.Task.clear()
 
-    if initial?, do: prepare_for_project_build(token)
+    if initial? do
+      prepare_for_project_build(token)
+    end
+
+    Engine.Mix.record_deps(project)
 
     compile_fun = fn ->
       Mix.Task.clear()
       Progress.report(token, message: "Compiling #{Project.display_name(project)}")
-      result = compile_in_isolation()
+      result = compile_in_isolation(force?)
       maybe_load_modules()
       Engine.Mix.ensure_hex_and_rebar()
       Mix.Task.run(:loadpaths)
@@ -101,10 +105,10 @@ defmodule Engine.Build.Project do
     end
   end
 
-  defp compile_in_isolation do
+  defp compile_in_isolation(force?) do
     compile_fun = fn ->
       Engine.Mix.ensure_hex_and_rebar()
-      Mix.Task.run(:compile, mix_compile_opts())
+      Mix.Task.run(:compile, Build.State.mix_compile_opts(force?))
     end
 
     case Isolation.invoke(compile_fun) do
@@ -145,24 +149,5 @@ defmodule Engine.Build.Project do
       Progress.report(token, message: "mix deps.compile")
       Mix.Task.run("deps.safe_compile", ~w(--skip-umbrella-children))
     end
-
-    Progress.report(token, message: "Loading plugins")
-    Plugin.Discovery.run()
-  end
-
-  defp mix_compile_opts do
-    # --no-prune-code-paths keeps mix from deleting the engine's own code
-    # paths during the project compile. It only applies to the top-level
-    # compile; dependencies each compile in their own project frame with
-    # pruning enabled, which is what isolates them from undeclared siblings.
-    ~w(
-        --return-errors
-        --ignore-module-conflict
-        --all-warnings
-        --docs
-        --debug-info
-        --no-protocol-consolidation
-        --no-prune-code-paths
-    )
   end
 end

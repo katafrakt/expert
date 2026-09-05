@@ -372,7 +372,7 @@ let
 
       spitfire =
         let
-          version = "0.3.13";
+          version = "0.4.1";
           drv = buildMix {
             inherit version;
             name = "spitfire";
@@ -381,7 +381,7 @@ let
             src = fetchHex {
               inherit version;
               pkg = "spitfire";
-              sha256 = "3601be88ceed4967b584e96444de3e1d12d6555ae0864a7390b9cd5332d134b4";
+              sha256 = "27d86f67681179682b15c6758d64ac2eb2b3637ed8340800c8b885c69754cdcd";
             };
           };
         in
@@ -389,7 +389,7 @@ let
 
       telemetry =
         let
-          version = "1.3.0";
+          version = "1.4.2";
           drv = buildRebar3 {
             inherit version;
             name = "telemetry";
@@ -397,7 +397,7 @@ let
             src = fetchHex {
               inherit version;
               pkg = "telemetry";
-              sha256 = "7015fc8919dbe63764f4b4b87a95b7c0996bd539e0d499be6ec9d7f3875b79e6";
+              sha256 = "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1";
             };
           };
         in

@@ -8,6 +8,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
   import Forge.Test.RangeSupport
 
   alias Engine.Search
+  alias Engine.Search.Indexer.Beams
   alias Expert.EngineApi
   alias Expert.EngineNode
   alias Expert.EngineSupervisor
@@ -32,6 +33,21 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
     end)
 
     %{uri: uri}
+  end
+
+  defp with_multi_arity_file(%{project: project}) do
+    uri =
+      project
+      |> file_path(Path.join("lib", "multi_arity.ex"))
+      |> Document.Path.ensure_uri()
+
+    {:ok, _document} = Document.Store.open_temporary(uri)
+
+    on_exit(fn ->
+      :ok = Document.Store.close(uri)
+    end)
+
+    %{multi_arity_uri: uri}
   end
 
   defp subject_module_uri(project) do
@@ -184,6 +200,74 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
     end
   end
 
+  describe "definition/2 when remote call exact arity is missing" do
+    setup [:with_multi_arity_file]
+
+    test "falls back to other arities of the same function", %{
+      project: project,
+      multi_arity_uri: multi_arity_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesRemoteFunction do
+          alias MultiArity
+
+          def uses_sum() do
+            MultiArity.su|m(1, 2, 3, 4)
+          end
+        end
+      ]
+
+      assert {:ok, definitions} = definition(project, subject_module, multi_arity_uri)
+
+      assert definitions == [
+               {multi_arity_uri, ~S[  def «sum(a, b)» do]},
+               {multi_arity_uri, ~S[  def «sum(a, b, c)» do]}
+             ]
+    end
+
+    test "prefers exact arity definitions when present", %{
+      project: project,
+      multi_arity_uri: multi_arity_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesRemoteFunction do
+          alias MultiArity
+
+          def uses_sum() do
+            MultiArity.su|m(1, 2, 3)
+          end
+        end
+      ]
+
+      assert {:ok, ^multi_arity_uri, definition_line} =
+               definition(project, subject_module, multi_arity_uri)
+
+      assert definition_line == ~S[  def «sum(a, b, c)» do]
+    end
+
+    test "falls back to other arities with ElixirSense", %{
+      project: project,
+      multi_arity_uri: multi_arity_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesRemoteFunction do
+          alias MultiArity
+
+          def uses_sum() do
+            MultiArity.su|m(1, 2, 3, 4)
+          end
+        end
+      ]
+
+      assert {:ok, definitions} = definition(project, subject_module, [])
+
+      assert definitions == [
+               {multi_arity_uri, ~S[  def «sum»(a, b) do]},
+               {multi_arity_uri, ~S[  def «sum»(a, b, c) do]}
+             ]
+    end
+  end
+
   describe "definition/2 when making remote call by import" do
     setup [:with_referenced_file]
 
@@ -284,6 +368,51 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
                definition(project, subject_module, referenced_uri)
 
       assert definition_line == ~S[      def «hello_func_in_using»() do]
+    end
+
+    test "find the quoted definition injected into another module", %{
+      project: project,
+      uri: referenced_uri
+    } do
+      subject_module = ~q[
+        defmodule UsesInjectedDefinition do
+          def allowed?(user) do
+            MyDefinition.Capability.allowe|d?(user, :some_capability)
+          end
+        end
+      ]
+
+      assert {:ok, ^referenced_uri, definition_line} =
+               definition(project, subject_module, referenced_uri)
+
+      assert definition_line == ~S[      def «allowed?(_user, _capability)», do: true]
+    end
+
+    test "resolves a use-injected definition after a forced project compile", %{
+      project: project,
+      uri: referenced_uri
+    } do
+      EngineApi.register_listener(project, self(), [:all])
+      EngineApi.schedule_compile(project, true)
+      assert_receive project_compiled(), @project_compile_timeout
+      assert_receive project_index_ready(project: ^project), @project_index_timeout
+
+      code = ~q[
+        defmodule UsesInjectedDefinition do
+          def allowed?(user) do
+            MyDefinition.Capability.allowe|d?(user, :some_capability)
+          end
+        end
+      ]
+
+      {position, code} = pop_cursor(code)
+      {:ok, document} = subject_module(project, code)
+
+      assert {:ok, location} = EngineApi.definition(project, document, position)
+      assert location.document.uri == referenced_uri
+
+      assert decorate(location.document, location.range) ==
+               ~S[      def «allowed?(_user, _capability)», do: true]
     end
   end
 
@@ -658,13 +787,17 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
   end
 
   defp index(project, referenced_uris) when is_list(referenced_uris) do
-    entries = Enum.flat_map(referenced_uris, &do_index/1)
+    entries =
+      Enum.flat_map(referenced_uris, fn referenced_uri ->
+        source_entries = do_index(referenced_uri)
+        source_entries ++ compiler_use_entries(project, referenced_uri, source_entries)
+      end)
+
     Store.replace(project, entries)
   end
 
   defp index(project, referenced_uri) do
-    entries = do_index(referenced_uri)
-    Store.replace(project, entries)
+    index(project, [referenced_uri])
   end
 
   defp do_index(referenced_uri) do
@@ -673,5 +806,31 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
            Search.Indexer.Source.index(document.path, Document.to_string(document)) do
       entries
     end
+  end
+
+  defp compiler_use_entries(project, referenced_uri, source_entries) do
+    source_path = Document.Path.ensure_path(referenced_uri)
+
+    beam_paths_by_name =
+      project
+      |> file_path(Path.join([".expert", "build", "**", "ebin", "*.beam"]))
+      |> Path.wildcard()
+      |> Enum.group_by(&Path.basename/1)
+
+    source_entries
+    |> Enum.filter(&(&1.type == :module and is_atom(&1.subject)))
+    |> Enum.flat_map(fn entry ->
+      beam_paths_by_name
+      |> Map.get("#{entry.subject}.beam", [])
+      |> Enum.flat_map(fn beam_path ->
+        with {:ok, binary} <- File.read(beam_path),
+             {:ok, entries} <- Beams.extract_definitions_from_binary(binary, source_path) do
+          Enum.filter(entries, &match?(%{metadata: %{via: :use}}, &1))
+        else
+          _ -> []
+        end
+      end)
+    end)
+    |> Enum.uniq_by(&{&1.subject, &1.type})
   end
 end

@@ -2,10 +2,12 @@ defmodule Engine.Compilation.Tracer do
   import Forge.EngineApi.Messages
 
   alias Engine.Build
+  alias Engine.Compilation.TraceBuffer
   alias Engine.Module.Loader
   alias Engine.Progress
 
   def trace({:on_module, module_binary, _filename}, %Macro.Env{} = env) do
+    maybe_record_module(env.file, module_binary, env.module)
     message = extract_module_updated(env.module, module_binary, env.file)
     maybe_report_progress(env.file)
     Engine.broadcast(message)
@@ -18,12 +20,7 @@ defmodule Engine.Compilation.Tracer do
 
   def extract_module_updated(module, module_binary, filename) do
     if !Loader.ensure_loaded?(module) do
-      erlang_filename =
-        filename
-        |> ensure_filename()
-        |> String.to_charlist()
-
-      :code.load_binary(module, erlang_filename, module_binary)
+      :code.load_binary(module, [], module_binary)
     end
 
     functions = module.__info__(:functions)
@@ -47,21 +44,19 @@ defmodule Engine.Compilation.Tracer do
     )
   end
 
-  defp ensure_filename(:none) do
-    unique = System.unique_integer([:positive, :monotonic])
-    Path.join(System.tmp_dir(), "file-#{unique}.ex")
-  end
-
-  defp ensure_filename(filename) when is_binary(filename) do
-    filename
-  end
-
   defp maybe_report_progress(file) do
     with ".ex" <- Path.extname(file),
          token when not is_nil(token) <- Build.get_progress_token() do
       Progress.report(token, message: progress_message(file))
     end
   end
+
+  defp maybe_record_module(file, module_binary, module)
+       when is_binary(file) and is_binary(module_binary) and is_atom(module) do
+    TraceBuffer.record_module(file, module_binary, module)
+  end
+
+  defp maybe_record_module(_file, _module_binary, _module), do: :ok
 
   defp progress_message(file) do
     relative_path_elements =
