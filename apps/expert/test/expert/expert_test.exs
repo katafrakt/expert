@@ -125,7 +125,10 @@ defmodule ExpertTest do
         initializationOptions: %{},
         capabilities: %{
           workspace: %{
-            workspaceFolders: true
+            workspaceFolders: true,
+            didChangeWatchedFiles: %{
+              dynamicRegistration: Keyword.get(opts, :watched_files_dynamic_registration, true)
+            }
           },
           window: %{
             showMessage: %{}
@@ -185,6 +188,66 @@ defmodule ExpertTest do
       assert project.root_uri == main_project.root_uri
 
       assert_project_alive?(main_project)
+    end
+
+    test "starts a project without registering file watchers when the client lacks support", %{
+      client: client,
+      project_root: project_root,
+      main_project: main_project
+    } do
+      assert :ok =
+               request(
+                 client,
+                 initialize_request(project_root,
+                   id: 1,
+                   projects: [main_project],
+                   watched_files_dynamic_registration: false
+                 )
+               )
+
+      assert_result(1, _)
+      assert :ok = notify(client, initialized_notification())
+
+      assert_project_alive?(main_project)
+      refute_receive %{"method" => "client/registerCapability"}, 100
+    end
+
+    test "continues after the client rejects file watcher registration", %{
+      client: client,
+      project_root: project_root,
+      main_project: main_project
+    } do
+      assert :ok =
+               request(
+                 client,
+                 initialize_request(project_root, id: 1, projects: [main_project])
+               )
+
+      assert_result(1, _)
+      assert :ok = notify(client, initialized_notification())
+
+      assert_receive %{
+        "jsonrpc" => "2.0",
+        "id" => registration_id,
+        "method" => "client/registerCapability"
+      }
+
+      assert :ok =
+               request(client, %{
+                 jsonrpc: "2.0",
+                 id: registration_id,
+                 error: %{code: -32_601, message: "Method not found"}
+               })
+
+      assert_notification("window/logMessage", %{
+        "message" => "Client rejected file watcher registration (-32601): Method not found",
+        "type" => 2
+      })
+
+      assert_project_alive?(main_project)
+
+      assert :ok = request(client, %{jsonrpc: "2.0", id: 2, method: "shutdown"})
+      assert_result(2, nil)
     end
 
     test "uses the umbrella root for an initial sub-app workspace folder", %{
@@ -861,6 +924,76 @@ defmodule ExpertTest do
   end
 
   describe "text document changes" do
+    test "applies batched incremental changes against the preceding change", %{
+      client: client,
+      project_root: project_root,
+      main_project: main_project
+    } do
+      test_pid = self()
+
+      change = fn line, character, text ->
+        position = %{line: line, character: character}
+        %{text: text, range: %{start: position, end: position}}
+      end
+
+      patch(Expert.EngineApi, :broadcast, fn _project, _message -> :ok end)
+
+      patch(Expert.EngineApi, :compile_document, fn _project, document ->
+        send(test_pid, {:compiled_document, Document.to_string(document)})
+        :ok
+      end)
+
+      assert :ok =
+               request(
+                 client,
+                 initialize_request(project_root, id: 1, projects: [main_project])
+               )
+
+      assert_result(1, _)
+      assert Expert.Project.Store.transition(main_project, :ready)
+
+      file_uri =
+        Document.Path.to_uri(Path.join([project_root, "main", "lib", "sequential_changes.ex"]))
+
+      assert :ok =
+               notify(client, %{
+                 method: "textDocument/didOpen",
+                 jsonrpc: "2.0",
+                 params: %{
+                   textDocument: %{
+                     uri: file_uri,
+                     languageId: "elixir",
+                     version: 1,
+                     text: "defmodule Repro do"
+                   }
+                 }
+               })
+
+      assert_eventually(match?({:ok, _document}, Document.Store.fetch(file_uri)))
+
+      assert :ok =
+               notify(client, %{
+                 method: "textDocument/didChange",
+                 jsonrpc: "2.0",
+                 params: %{
+                   textDocument: %{uri: file_uri, version: 2},
+                   contentChanges: [
+                     change.(0, 18, "\n"),
+                     change.(1, 0, "d"),
+                     change.(1, 1, "e"),
+                     change.(1, 2, "f")
+                   ]
+                 }
+               })
+
+      expected = "defmodule Repro do\ndef"
+
+      assert_receive {:compiled_document, compiled_document}
+      assert compiled_document == expected
+      assert {:ok, document} = Document.Store.fetch(file_uri)
+      assert Document.to_string(document) == expected
+    end
+
     test "compileOnType controls document compilation without suppressing change broadcasts", %{
       client: client,
       project_root: project_root,
