@@ -42,9 +42,19 @@ defmodule Engine do
     to: Engine.Completion,
     as: :struct_fields
 
+  defdelegate declaration(document, position), to: CodeIntelligence.Declaration
+
   defdelegate definition(document, position), to: CodeIntelligence.Definition
 
+  defdelegate implementation(document, position),
+    to: CodeIntelligence.Implementations,
+    as: :implementations
+
   defdelegate hover(document, position), to: CodeIntelligence.Hover
+
+  defdelegate signature_help(document, position),
+    to: CodeIntelligence.SignatureHelp,
+    as: :signature
 
   defdelegate modules_with_prefix(prefix), to: Engine.Modules, as: :with_prefix
 

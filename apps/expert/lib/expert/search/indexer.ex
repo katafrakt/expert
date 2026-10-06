@@ -73,14 +73,14 @@ defmodule Expert.Search.Indexer do
     end
   end
 
-  defp replace_index(%Project{} = project, path_to_ids, opts) do
+  defp replace_index(%Project{} = project, _path_to_ids, opts) do
     paths = paths_for_project(project, opts)
-    {entries, state} = paths |> index_stream(project) |> collect_stream(new_stream_state())
 
-    indexed_paths = MapSet.new(entries, & &1.path)
-    paths_to_clear = stored_paths_to_clear(path_to_ids, indexed_paths)
-
-    with :ok <- store_result(Store.apply_index_update(project, entries, paths_to_clear)) do
+    with :ok <- store_result(Store.replace(project, [])),
+         {:ok, state} <-
+           paths
+           |> index_stream(project)
+           |> persist_stream(new_stream_state(), project) do
       {:ok, Manifest.new(manifest_entries(state))}
     end
   end
@@ -252,13 +252,6 @@ defmodule Expert.Search.Indexer do
     end
   end
 
-  defp stored_paths_to_clear(path_to_ids, indexed_paths) do
-    path_to_ids
-    |> stored_paths()
-    |> MapSet.difference(indexed_paths)
-    |> Enum.to_list()
-  end
-
   defp stored_paths(path_to_ids) when is_map(path_to_ids) do
     path_to_ids
     |> Map.keys()
@@ -368,9 +361,14 @@ defmodule Expert.Search.Indexer do
 
   defp consume_entry(_origin, nil, entries, state), do: {entries, state}
 
-  defp consume_entry(:source, entry, entries, state) do
+  defp consume_entry(:source, %{subtype: subtype} = entry, entries, state)
+       when subtype in [:definition, :block_structure] do
     state = %{state | source_keys: MapSet.put(state.source_keys, source_key(entry))}
 
+    {[entry | entries], state}
+  end
+
+  defp consume_entry(:source, entry, entries, state) do
     {[entry | entries], state}
   end
 

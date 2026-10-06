@@ -413,10 +413,13 @@ defmodule Expert.State do
 
     server_capabilities =
       %Structures.ServerCapabilities{
+        call_hierarchy_provider: true,
         code_action_provider: code_action_options,
         code_lens_provider: code_lens_options,
         completion_provider: completion_options,
+        declaration_provider: true,
         definition_provider: true,
+        implementation_provider: true,
         document_formatting_provider: true,
         document_symbol_provider: true,
         execute_command_provider: command_options,
@@ -424,6 +427,10 @@ defmodule Expert.State do
         hover_provider: true,
         references_provider: true,
         rename_provider: rename_options,
+        selection_range_provider: true,
+        signature_help_provider: %Structures.SignatureHelpOptions{
+          trigger_characters: Handlers.SignatureHelp.trigger_characters()
+        },
         text_document_sync: sync_options,
         workspace_symbol_provider: true,
         workspace: %{

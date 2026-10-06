@@ -184,6 +184,26 @@ defmodule Expert.Search.Indexer.Extractors.FunctionReferenceTest do
   end
 
   describe "local function references" do
+    test "finds calls in defaults, guards, and the body of a guarded definition" do
+      code = ~q[
+        defmodule Parent do
+          def run(value \\ default()) when is_binary(value), do: process(value)
+
+          defp default(), do: :ok
+
+          defp process(value), do: value
+        end
+      ]
+
+      assert {:ok, [default, guard, body], document} = index(code)
+      assert default.subject == "Parent.default/0"
+      assert guard.subject == "Kernel.is_binary/1"
+      assert body.subject == "Parent.process/1"
+      assert extract(document, default.range) == "default()"
+      assert extract(document, guard.range) == "is_binary(value)"
+      assert extract(document, body.range) == "process(value)"
+    end
+
     test "finds a zero-arg local function on the right of a match" do
       code = in_a_module_function("x = local()")
       {:ok, [reference], _} = index(code)
@@ -275,6 +295,48 @@ defmodule Expert.Search.Indexer.Extractors.FunctionReferenceTest do
   end
 
   describe "imported function references" do
+    test "functions imported through use remember their module in nested scopes" do
+      code = ~q{
+        defmodule FunctionReferenceUseImports.B do
+          def foo, do: :ok
+        end
+
+        defmodule FunctionReferenceUseImports.A do
+          defmacro __using__(ast) do
+            quote do
+              import FunctionReferenceUseImports.B
+              unquote(ast)
+            end
+          end
+        end
+
+        defmodule FunctionReferenceUseImports do
+          use FunctionReferenceUseImports.A
+
+          def function, do: foo()
+
+          defmodule Nested do
+            def function, do: foo()
+          end
+        end
+      }
+
+      modules = for {module, _bytecode} <- Code.compile_string(code), do: module
+
+      on_exit(fn ->
+        Enum.each(modules, fn module ->
+          :code.purge(module)
+          :code.delete(module)
+        end)
+      end)
+
+      assert {:ok, [direct, nested], _} = index(code)
+      assert direct.subject == "FunctionReferenceUseImports.B.foo/0"
+      assert nested.subject == "FunctionReferenceUseImports.B.foo/0"
+      assert "foo()" = extract(code, direct.range)
+      assert "foo()" = extract(code, nested.range)
+    end
+
     test "imported local functions remember their module" do
       code = ~q{
       defmodule Imports do

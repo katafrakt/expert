@@ -135,6 +135,13 @@ defmodule Expert do
            message: "Document could not be loaded"
          }, lsp}
 
+      {:error, :invalid_call_hierarchy_item} ->
+        {:reply,
+         %GenLSP.ErrorResponse{
+           code: GenLSP.Enumerations.ErrorCodes.invalid_params(),
+           message: "Call hierarchy item has missing or unknown project context"
+         }, lsp}
+
       error ->
         message = "Failed to handle #{request.method}, #{inspect(error)}"
         Logger.error(message)
@@ -165,6 +172,9 @@ defmodule Expert do
       {:ok, nil}
     end
   end
+
+  defp document_request?(%{item: %GenLSP.Structures.CallHierarchyItem{uri: uri}})
+       when is_binary(uri), do: true
 
   defp document_request?(%{document: %Forge.Document{}}), do: true
 
@@ -549,11 +559,20 @@ defmodule Expert do
       %Requests.TextDocumentCompletion{} ->
         {:ok, Handlers.Completion}
 
+      %Requests.TextDocumentDeclaration{} ->
+        {:ok, Handlers.GoToDeclaration}
+
       %Requests.TextDocumentDefinition{} ->
         {:ok, Handlers.GoToDefinition}
 
+      %Requests.TextDocumentImplementation{} ->
+        {:ok, Handlers.GoToImplementation}
+
       %Requests.TextDocumentHover{} ->
         {:ok, Handlers.Hover}
+
+      %Requests.TextDocumentSignatureHelp{} ->
+        {:ok, Handlers.SignatureHelp}
 
       %Requests.WorkspaceExecuteCommand{} ->
         {:ok, Handlers.Commands}
@@ -572,6 +591,18 @@ defmodule Expert do
 
       %GenLSP.Requests.TextDocumentRename{} ->
         {:ok, Handlers.Rename}
+
+      %GenLSP.Requests.TextDocumentSelectionRange{} ->
+        {:ok, Handlers.SelectionRange}
+
+      %GenLSP.Requests.TextDocumentPrepareCallHierarchy{} ->
+        {:ok, Handlers.CallHierarchy}
+
+      %GenLSP.Requests.CallHierarchyIncomingCalls{} ->
+        {:ok, Handlers.CallHierarchy}
+
+      %GenLSP.Requests.CallHierarchyOutgoingCalls{} ->
+        {:ok, Handlers.CallHierarchy}
 
       %request_module{} ->
         {:error, {:unhandled, request_module}}

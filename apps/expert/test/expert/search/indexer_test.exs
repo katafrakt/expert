@@ -94,6 +94,10 @@ defmodule Expert.Search.IndexerTest do
       Engine.Mix.project_configuration(configured_project)
     end)
 
+    patch(EngineApi, :analyze, fn _project, document, opts ->
+      Forge.Ast.analyze(document, opts)
+    end)
+
     patch(EngineApi, :call, fn
       _project, Engine.ApplicationCache, :clear, [] ->
         Engine.ApplicationCache.clear()
@@ -134,11 +138,12 @@ defmodule Expert.Search.IndexerTest do
   end
 
   defp update_index(project) do
+    previous_paths = FakeBackend.entries() |> Enum.map(& &1.path) |> Enum.uniq()
     FakeBackend.reset_calls()
     assert :ok = Indexer.update_index(project)
     calls = FakeBackend.calls()
     entries = inserted_entries(calls)
-    paths_to_clear = cleared_paths(calls)
+    paths_to_clear = cleared_paths(calls, previous_paths)
     assert Enum.uniq(paths_to_clear) == paths_to_clear
     {entries, paths_to_clear}
   end
@@ -157,9 +162,10 @@ defmodule Expert.Search.IndexerTest do
     Expert.Project.Store.transition(project, :ready)
   end
 
-  defp cleared_paths(calls) do
+  defp cleared_paths(calls, previous_paths) do
     Enum.flat_map(calls, fn
       {:apply_index_update, _entries, paths} -> paths
+      {:replace, _entries} -> previous_paths
       _call -> []
     end)
   end

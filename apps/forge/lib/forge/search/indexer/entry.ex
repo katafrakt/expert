@@ -18,6 +18,7 @@ defmodule Forge.Search.Indexer.Entry do
           | {:function, function_type()}
 
   @type subject :: String.t()
+  @type caller :: String.t()
   @type entry_subtype :: :reference | :definition
   @type version :: String.t()
   @type entry_id :: pos_integer() | nil
@@ -40,6 +41,7 @@ defmodule Forge.Search.Indexer.Entry do
     :path,
     :range,
     :subject,
+    :caller,
     :subtype,
     :type,
     :metadata
@@ -48,6 +50,7 @@ defmodule Forge.Search.Indexer.Entry do
   @type t :: %__MODULE__{
           application: module(),
           subject: subject(),
+          caller: caller() | nil,
           block_id: block_id(),
           block_range: Forge.Document.Range.t() | nil,
           path: Path.t(),
