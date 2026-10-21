@@ -407,11 +407,6 @@ defmodule Expert.State do
         trigger_characters: CodeIntelligence.Completion.trigger_characters()
       }
 
-    rename_options =
-      %Structures.RenameOptions{
-        prepare_provider: true
-      }
-
     server_capabilities =
       %Structures.ServerCapabilities{
         call_hierarchy_provider: true,
@@ -427,7 +422,6 @@ defmodule Expert.State do
         folding_range_provider: true,
         hover_provider: true,
         references_provider: true,
-        rename_provider: rename_options,
         selection_range_provider: true,
         signature_help_provider: %Structures.SignatureHelpOptions{
           trigger_characters: Handlers.SignatureHelp.trigger_characters()

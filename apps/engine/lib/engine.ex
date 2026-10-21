@@ -66,10 +66,6 @@ defmodule Engine do
 
   defdelegate resolve_entity(analysis, position), to: CodeIntelligence.Entity, as: :resolve
 
-  defdelegate prepare_rename(analysis, position), to: Engine.CodeMod.Rename, as: :prepare
-
-  defdelegate rename(analysis, position, new_name, client_name), to: Engine.CodeMod.Rename
-
   defdelegate runtime_versions, to: Forge.VM.Versions, as: :current
 
   def list_apps do

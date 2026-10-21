@@ -172,25 +172,6 @@ defmodule Expert.EngineApi do
   def module_exports(target, module),
     do: runtime_call(target, Engine.Modules, :exports, [module])
 
-  def prepare_rename(%Project{} = project, %Analysis{} = analysis, %Position{} = position) do
-    call(project, Engine, :prepare_rename, [analysis, position])
-  end
-
-  def rename(
-        %Project{} = project,
-        %Analysis{} = analysis,
-        %Position{} = position,
-        new_name,
-        client_name
-      ) do
-    call(project, Engine, :rename, [
-      analysis,
-      position,
-      new_name,
-      client_name
-    ])
-  end
-
   def runtime_versions(%Project{} = project) do
     call(project, Engine, :runtime_versions, [])
   end
