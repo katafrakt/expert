@@ -348,7 +348,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert {:ok, ^referenced_uri, definition_line} =
                definition(project, subject_module, referenced_uri)
 
-      assert definition_line == ~S[      def «hello_func_in_using»() do]
+      assert definition_line == ~S[      def «hello_func_in_using» do]
     end
 
     test "find the correct definition when func defined in the quote block and called form another module",
@@ -371,7 +371,7 @@ defmodule Expert.Engine.CodeIntelligence.DefinitionTest do
       assert {:ok, ^referenced_uri, definition_line} =
                definition(project, subject_module, referenced_uri)
 
-      assert definition_line == ~S[      def «hello_func_in_using»() do]
+      assert definition_line == ~S[      def «hello_func_in_using» do]
     end
 
     test "find the quoted definition injected into another module", %{
