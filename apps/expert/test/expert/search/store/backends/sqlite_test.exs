@@ -1,5 +1,6 @@
 defmodule Expert.Search.Store.Backends.SqliteTest do
   use ExUnit.Case, async: false
+  use Patch
 
   import Forge.Test.Fixtures
 
@@ -219,7 +220,7 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
 
       {:ok, conn} = Exqlite.Basic.open(database_path)
       result = Exqlite.Basic.exec(conn, "SELECT version FROM schema")
-      assert {:ok, [[5]], ["version"]} = Exqlite.Basic.rows(result)
+      assert {:ok, [[7]], ["version"]} = Exqlite.Basic.rows(result)
       assert :ok = Exqlite.Basic.close(conn)
     end
   end
@@ -285,9 +286,24 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
 
       assert {:ok, :empty} = Sqlite.prepare(pid)
       assert :ok = Sqlite.replace_all(project, [old_entry])
-      assert {:error, _reason} = Sqlite.replace_all(project, [invalid_entry])
+      spy(Exqlite.Basic)
+
+      replacement = fn write_batch ->
+        with :ok <- write_batch.([%Entry{old_entry | id: 3, subject: New.Module}]),
+             :ok <- write_batch.([invalid_entry]) do
+          {:ok, :replaced}
+        end
+      end
+
+      assert {:error, _reason} = Sqlite.replace_all(project, replacement)
+
+      assert_called(
+        Exqlite.Basic.exec(_, "DROP INDEX IF EXISTS entries_caller_idx", []),
+        1
+      )
 
       assert [^old_entry] = Sqlite.find_by_subject(project, Persisted.Module, :_, :_)
+      assert [] = Sqlite.find_by_subject(project, New.Module, :_, :_)
 
       database_path = Sqlite.database_path(project, runtime_versions)
       {:ok, conn} = Exqlite.Basic.open(database_path)
@@ -300,6 +316,7 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
       assert MapSet.subset?(
                MapSet.new([
                  "entries_subject_idx",
+                 "entries_caller_idx",
                  "entries_block_idx",
                  "entries_id_idx",
                  "entries_path_id_idx",
@@ -326,7 +343,14 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
         })
 
       assert {:ok, :empty} = Sqlite.prepare(pid)
-      assert :ok = Sqlite.replace_all(project, entries)
+
+      replacement = fn write_batch ->
+        with :ok <- write_batch.(entries) do
+          {:ok, :replaced}
+        end
+      end
+
+      assert {:ok, :replaced} = Sqlite.replace_all(project, replacement)
     end
   end
 
@@ -406,6 +430,48 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
 
       assert {:ok, [[1, 1]], _columns} = Exqlite.Basic.rows(result)
       assert :ok = Exqlite.Basic.close(conn)
+    end
+
+    test "replaces entries via streamed batch update", %{
+      project: project,
+      runtime_versions: runtime_versions
+    } do
+      old_entry = %Entry{
+        id: 1,
+        subject: Replaced.Old,
+        path: "/same.ex",
+        type: :module,
+        subtype: :definition,
+        block_id: :root
+      }
+
+      new_entry = %Entry{
+        id: 2,
+        subject: Replaced.New,
+        path: "/same.ex",
+        type: :module,
+        subtype: :definition,
+        block_id: :root
+      }
+
+      pid =
+        start_supervised!(%{
+          id: :sqlite,
+          start: {Sqlite, :start_link, [project, [runtime_versions: runtime_versions]]}
+        })
+
+      assert {:ok, :empty} = Sqlite.prepare(pid)
+      assert {:ok, []} = Sqlite.apply_index_update(project, [old_entry], [])
+
+      update = fn write_batch ->
+        with :ok <- write_batch.([new_entry]) do
+          {:ok, :updated}
+        end
+      end
+
+      assert {:ok, [1], :updated} = Sqlite.apply_index_update(project, update, ["/same.ex"])
+      assert [] = Sqlite.find_by_subject(project, Replaced.Old, :_, :_)
+      assert [^new_entry] = Sqlite.find_by_subject(project, Replaced.New, :_, :_)
     end
 
     test "chunks blob deletes that exceed SQLite's variable limit", %{
@@ -743,6 +809,147 @@ defmodule Expert.Search.Store.Backends.SqliteTest do
 
       assert {:ok, :empty} = Sqlite.prepare(pid)
       assert [] = Sqlite.find_by_paths(project, paths, :module, :definition)
+    end
+  end
+
+  describe "find_by_prefix/4" do
+    test "finds entries matching prefix", %{
+      project: project,
+      runtime_versions: runtime_versions
+    } do
+      map = %Entry{
+        id: 1,
+        path: "/lib/enum.ex",
+        subject: "Enum.map/2",
+        type: {:function, :usage},
+        subtype: :reference,
+        block_id: :root
+      }
+
+      map_every = %Entry{
+        id: 2,
+        path: "/lib/enum.ex",
+        subject: "Enum.map_every/3",
+        type: {:function, :usage},
+        subtype: :reference,
+        block_id: :root
+      }
+
+      foo_bar = %Entry{
+        id: 3,
+        path: "/lib/foo.ex",
+        subject: "Foo_bar/1",
+        type: {:function, :usage},
+        subtype: :reference,
+        block_id: :root
+      }
+
+      foo_xbar = %Entry{
+        id: 4,
+        path: "/lib/foo.ex",
+        subject: "FooXbar/1",
+        type: {:function, :usage},
+        subtype: :reference,
+        block_id: :root
+      }
+
+      pid =
+        start_supervised!(%{
+          id: :sqlite,
+          start: {Sqlite, :start_link, [project, [runtime_versions: runtime_versions]]}
+        })
+
+      assert {:ok, :empty} = Sqlite.prepare(pid)
+      assert :ok = Sqlite.replace_all(project, [map, map_every, foo_bar, foo_xbar])
+
+      assert [^map] = Sqlite.find_by_prefix(project, "Enum.map/", :_, :_)
+      assert [^map, ^map_every] = Sqlite.find_by_prefix(project, "Enum.map", :_, :_)
+      assert [^foo_bar] = Sqlite.find_by_prefix(project, "Foo_", :_, :_)
+      assert [] = Sqlite.find_by_prefix(project, "NonExistent", :_, :_)
+    end
+
+    test "matches ASCII and Unicode function names by their exact prefixes", %{
+      project: project,
+      runtime_versions: runtime_versions
+    } do
+      entries =
+        ["wien", "wieża", "wieść", "wiesz", "więcej", "Wieża"]
+        |> Enum.with_index(1)
+        |> Enum.map(fn {name, id} ->
+          %Entry{
+            id: id,
+            path: "/lib/unicode.ex",
+            subject: "Unicode.#{name}/0",
+            type: {:function, :public},
+            subtype: :definition,
+            block_id: :root
+          }
+        end)
+
+      pid =
+        start_supervised!(%{
+          id: :sqlite,
+          start: {Sqlite, :start_link, [project, [runtime_versions: runtime_versions]]}
+        })
+
+      assert {:ok, :empty} = Sqlite.prepare(pid)
+      assert :ok = Sqlite.replace_all(project, entries)
+
+      for {prefix, names} <- [
+            {"wie", ["wien", "wieża", "wieść", "wiesz"]},
+            {"wież", ["wieża"]},
+            {"wieś", ["wieść"]},
+            {"wien", ["wien"]},
+            {"wieża", ["wieża"]},
+            {"wieść", ["wieść"]},
+            {"wieź", []}
+          ] do
+        subjects = Enum.map(names, &"Unicode.#{&1}/0")
+        expected = Enum.filter(entries, &(&1.subject in subjects))
+
+        actual =
+          Sqlite.find_by_prefix(project, "Unicode.#{prefix}", {:function, :public}, :definition)
+
+        assert Enum.sort_by(actual, & &1.id) == Enum.sort_by(expected, & &1.id),
+               "unexpected matches for prefix #{inspect(prefix)}"
+      end
+    end
+
+    test "matches Unicode prefixes whose byte successor is not valid UTF-8", %{
+      project: project,
+      runtime_versions: runtime_versions
+    } do
+      entries =
+        ["żółć", "ÿield", "þield", "żółty"]
+        |> Enum.with_index(1)
+        |> Enum.map(fn {name, id} ->
+          %Entry{
+            id: id,
+            path: "/lib/unicode.ex",
+            subject: "Unicode.#{name}/0",
+            type: {:function, :public},
+            subtype: :definition,
+            block_id: :root
+          }
+        end)
+
+      pid =
+        start_supervised!(%{
+          id: :sqlite,
+          start: {Sqlite, :start_link, [project, [runtime_versions: runtime_versions]]}
+        })
+
+      assert {:ok, :empty} = Sqlite.prepare(pid)
+      assert :ok = Sqlite.replace_all(project, entries)
+
+      for {prefix, names} <- [{"ż", ["żółć", "żółty"]}, {"ÿ", ["ÿield"]}] do
+        # ż and ÿ end in 0xBF, so incrementing the last byte yields an invalid UTF-8 bound.
+        subjects = Enum.map(names, &"Unicode.#{&1}/0")
+        expected = Enum.filter(entries, &(&1.subject in subjects))
+
+        actual = Sqlite.find_by_prefix(project, "Unicode.#{prefix}", :_, :_)
+        assert Enum.sort_by(actual, & &1.id) == Enum.sort_by(expected, & &1.id)
+      end
     end
   end
 end

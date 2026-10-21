@@ -13,7 +13,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   require Entry
   require Logger
 
-  @schema_version 5
+  @schema_version 7
   @database_file "source.index.sqlite3"
   @slow_query_threshold_ms 500
   # NOTE(doorgan): SQLite has a variable limit of 32766. Entry batches use 7 params
@@ -71,8 +71,21 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   end
 
   @impl Backend
-  def replace_all(%Project{} = project, entries) do
-    GenServer.call(name(project), {:replace_all, entries}, :infinity)
+  def replace_all(%Project{} = project, entries) when is_list(entries) do
+    replacement = fn write_batch ->
+      with :ok <- write_batch.(entries) do
+        {:ok, :ok}
+      end
+    end
+
+    case replace_all(project, replacement) do
+      {:ok, :ok} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def replace_all(%Project{} = project, replacement) when is_function(replacement, 1) do
+    GenServer.call(name(project), {:replace_all, replacement}, :infinity)
   end
 
   @impl Backend
@@ -223,8 +236,8 @@ defmodule Expert.Search.Store.Backends.Sqlite do
   def handle_call(:definitions_for_fuzzy, _from, %State{} = state),
     do: reply(do_find_definitions_for_fuzzy(state), state)
 
-  def handle_call({:replace_all, entries}, _from, %State{} = state),
-    do: reply(do_replace_all(state, entries), state)
+  def handle_call({:replace_all, replacement}, _from, %State{} = state),
+    do: reply(do_replace_all(state, replacement), state)
 
   def handle_call(
         {:apply_index_update, updated_entries, paths_to_clear},
@@ -343,19 +356,33 @@ defmodule Expert.Search.Store.Backends.Sqlite do
     end
   end
 
-  def do_replace_all(%State{} = state, entries) when is_list(entries) do
-    with :ok <-
-           transaction(state, fn ->
-             with :ok <- drop_indexes(state),
-                  :ok <- exec(state, "DELETE FROM entry_blobs"),
-                  :ok <- exec(state, "DELETE FROM entries"),
-                  :ok <- exec(state, "DELETE FROM structures"),
-                  :ok <- insert_entries(state, entries) do
-               create_indexes(state)
-             end
-           end) do
-      exec(state, "PRAGMA optimize = 0x10002")
+  def do_replace_all(%State{} = state, replacement) when is_function(replacement, 1) do
+    with {:ok, result} <- transaction(state, fn -> replace_entries(state, replacement) end),
+         :ok <- exec(state, "PRAGMA optimize = 0x10002") do
+      {:ok, result}
     end
+  end
+
+  defp replace_entries(%State{} = state, replacement) do
+    with :ok <- drop_indexes(state),
+         :ok <- exec(state, "DELETE FROM entry_blobs"),
+         :ok <- exec(state, "DELETE FROM entries"),
+         :ok <- exec(state, "DELETE FROM structures"),
+         {:ok, result} <- replacement.(fn entries -> insert_entries(state, entries) end),
+         :ok <- create_indexes(state) do
+      {:ok, result}
+    end
+  end
+
+  def do_apply_index_update(%State{} = state, update, paths_to_clear)
+      when is_function(update, 1) and is_list(paths_to_clear) do
+    transaction(state, fn ->
+      with {:ok, deleted_ids} <- delete_entries_for_paths(state, paths_to_clear),
+           :ok <- delete_structures_for_paths(state, paths_to_clear),
+           {:ok, result} <- update.(fn entries -> insert_entries(state, entries) end) do
+        {:ok, deleted_ids, result}
+      end
+    end)
   end
 
   def do_apply_index_update(%State{} = state, updated_entries, paths_to_clear)
@@ -707,7 +734,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
          :ok <-
            exec(
              state,
-             "CREATE INDEX IF NOT EXISTS entries_caller_idx ON entries (caller, path, type, subtype)"
+             "CREATE INDEX IF NOT EXISTS entries_caller_idx ON entries (caller, path, type, subtype) WHERE caller IS NOT NULL"
            ),
          :ok <-
            exec(state, "CREATE INDEX IF NOT EXISTS entries_block_idx ON entries (block_id, path)"),
@@ -735,6 +762,7 @@ defmodule Expert.Search.Store.Backends.Sqlite do
 
   defp drop_indexes(%State{} = state) do
     with :ok <- exec(state, "DROP INDEX IF EXISTS entries_subject_idx"),
+         :ok <- exec(state, "DROP INDEX IF EXISTS entries_caller_idx"),
          :ok <- exec(state, "DROP INDEX IF EXISTS entries_block_idx"),
          :ok <- exec(state, "DROP INDEX IF EXISTS entries_id_idx"),
          :ok <- exec(state, "DROP INDEX IF EXISTS entries_path_id_idx"),
@@ -953,9 +981,33 @@ defmodule Expert.Search.Store.Backends.Sqlite do
 
   defp prefix_constraint(:_), do: {[], []}
 
+  # Range queries use the B-tree index directly and avoid escaping wildcards in LIKE.
   defp prefix_constraint(prefix) do
-    {["subject LIKE ? ESCAPE '\\'"], [like_prefix(subject_key(prefix))]}
+    prefix_key = subject_key(prefix)
+
+    case next_prefix(prefix_key) do
+      {:ok, next_key} ->
+        {["subject >= ? AND subject < ?"], [prefix_key, next_key]}
+
+      :overflow ->
+        {["subject >= ?"], [prefix_key]}
+    end
   end
+
+  defp next_prefix(binary) when is_binary(binary) do
+    binary
+    |> :erlang.binary_to_list()
+    |> Enum.reverse()
+    |> increment_bytes()
+  end
+
+  defp increment_bytes([255 | rest]), do: increment_bytes(rest)
+
+  defp increment_bytes([b | rest]) do
+    {:ok, :erlang.list_to_binary(Enum.reverse([b + 1 | rest]))}
+  end
+
+  defp increment_bytes([]), do: :overflow
 
   defp add_type_constraint(clauses, args, :_), do: {clauses, args}
 
@@ -974,6 +1026,9 @@ defmodule Expert.Search.Store.Backends.Sqlite do
           commit_transaction(state, :ok)
 
         {:ok, _} = result ->
+          commit_transaction(state, result)
+
+        {:ok, _, _} = result ->
           commit_transaction(state, result)
 
         {:error, _} = error ->
@@ -1155,14 +1210,6 @@ defmodule Expert.Search.Store.Backends.Sqlite do
         _ -> {:cont, failure}
       end
     end)
-  end
-
-  defp like_prefix(prefix) do
-    prefix
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
-    |> Kernel.<>("%")
   end
 
   defp subject_key(:_), do: :_
